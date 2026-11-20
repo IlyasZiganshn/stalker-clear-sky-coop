@@ -16,6 +16,7 @@ add_library(coopnet STATIC
     src/interp.cpp
     src/prediction.cpp
     src/delta.cpp
+    src/baseline.cpp
 )
 target_include_directories(coopnet PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 if(WIN32)
@@ -40,6 +41,7 @@ add_executable(coopnet_tests
     tests/test_interp.cpp
     tests/test_prediction.cpp
     tests/test_delta.cpp
+    tests/test_baseline.cpp
 )
 target_link_libraries(coopnet_tests PRIVATE coopnet Threads::Threads)
 target_include_directories(coopnet_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)

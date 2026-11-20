@@ -91,3 +91,36 @@ static_assert(coopnet::kPlayerStateType > 5,
 static_assert(coopnet::kPlayerStateType !=
                   static_cast<std::uint8_t>(0x10),
               "player state must not reuse the chat opcode");
+
+COOP_TEST(player_gone_roundtrip) {
+    std::vector<std::uint8_t> wire;
+    CHECK(coopnet::encodePlayerGone(1002, wire));
+    CHECK_EQ(wire.size(), coopnet::kPlayerGoneSize);
+
+    std::uint32_t netId = 0;
+    CHECK(coopnet::decodePlayerGone(wire.data(), wire.size(), netId));
+    CHECK_EQ(netId, std::uint32_t{1002});
+}
+
+COOP_TEST(player_gone_rejects_malformed_input) {
+    std::vector<std::uint8_t> wire;
+    CHECK(!coopnet::encodePlayerGone(0, wire));
+
+    CHECK(coopnet::encodePlayerGone(7, wire));
+    std::uint32_t netId = 0;
+    CHECK(!coopnet::decodePlayerGone(nullptr, wire.size(), netId));
+    CHECK(!coopnet::decodePlayerGone(wire.data(), 0, netId));
+    CHECK(!coopnet::decodePlayerGone(wire.data(), wire.size() - 1, netId));
+
+    std::vector<std::uint8_t> trailing = wire;
+    trailing.push_back(0);
+    CHECK(!coopnet::decodePlayerGone(trailing.data(), trailing.size(), netId));
+
+    std::vector<std::uint8_t> wrongType = wire;
+    wrongType[0] = coopnet::kPlayerStateType;
+    CHECK(!coopnet::decodePlayerGone(wrongType.data(), wrongType.size(), netId));
+
+    std::vector<std::uint8_t> zeroId = wire;
+    zeroId[1] = zeroId[2] = zeroId[3] = zeroId[4] = 0;
+    CHECK(!coopnet::decodePlayerGone(zeroId.data(), zeroId.size(), netId));
+}

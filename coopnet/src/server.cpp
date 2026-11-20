@@ -109,6 +109,30 @@ std::size_t NetServer::joinedCount() const {
     return count;
 }
 
+std::vector<NetServer::ServerEvent> NetServer::takeEvents() {
+    std::vector<ServerEvent> events;
+    std::map<Endpoint, std::uint32_t> current;
+    for (const auto& [endpoint, peer] : peers_) {
+        if (peer.state() == PeerState::Joined) {
+            current.emplace(endpoint, peer.netId());
+        }
+    }
+
+    for (const auto& [endpoint, netId] : current) {
+        if (reportedJoined_.find(endpoint) == reportedJoined_.end()) {
+            events.push_back({ServerEvent::Type::Joined, endpoint, netId});
+        }
+    }
+    for (const auto& [endpoint, netId] : reportedJoined_) {
+        if (current.find(endpoint) == current.end()) {
+            events.push_back({ServerEvent::Type::Left, endpoint, netId});
+        }
+    }
+
+    reportedJoined_ = std::move(current);
+    return events;
+}
+
 bool NetServer::resolveSlot(const Endpoint& self, std::uint8_t requested,
                             std::uint8_t& assigned) const {
     for (std::uint8_t slot = 0; slot < config_.peer.maxPlayers; ++slot) {

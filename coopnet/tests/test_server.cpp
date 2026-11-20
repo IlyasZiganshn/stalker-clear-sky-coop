@@ -180,3 +180,28 @@ COOP_TEST(server_caps_unknown_peers) {
     CHECK_EQ(server.peerCount(), std::size_t{1});
     CHECK_EQ(server.droppedDatagrams(), std::size_t{1});
 }
+
+COOP_TEST(server_reports_join_and_leave_events) {
+    NetServer server(serverOptions());
+    ClientPeer client(clientOptions());
+    const Endpoint at = endpointOf(8101);
+
+    CHECK(client.start("Event"));
+    pump(server, {{at, &client}}, 0);
+    CHECK(client.state() == PeerState::Joined);
+
+    auto events = server.takeEvents();
+    CHECK_EQ(events.size(), std::size_t{1});
+    CHECK(events[0].type == NetServer::ServerEvent::Type::Joined);
+    CHECK(events[0].endpoint == at);
+    CHECK_EQ(events[0].netId, client.netId());
+    CHECK(server.takeEvents().empty());
+
+    server.poll(6000);
+    CHECK_EQ(server.peerCount(), std::size_t{0});
+    events = server.takeEvents();
+    CHECK_EQ(events.size(), std::size_t{1});
+    CHECK(events[0].type == NetServer::ServerEvent::Type::Left);
+    CHECK_EQ(events[0].netId, client.netId());
+    CHECK(server.takeEvents().empty());
+}

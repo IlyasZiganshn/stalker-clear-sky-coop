@@ -19,6 +19,9 @@ struct PlayerState {
 constexpr std::uint8_t kPlayerStateType = 0x11;
 constexpr std::size_t kPlayerStateSize = 1 + 4 + 4 * 4;
 
+constexpr std::uint8_t kPlayerGoneType = 0x12;
+constexpr std::size_t kPlayerGoneSize = 1 + 4;
+
 // Wire format: [u8 type = 0x11][u32 net_id][f32 x][f32 y][f32 z][f32 yaw].
 // Encoding fails for net_id 0 or non-finite coordinates.
 bool encodePlayerState(const PlayerState& state, std::vector<std::uint8_t>& out);
@@ -26,5 +29,11 @@ bool encodePlayerState(const PlayerState& state, std::vector<std::uint8_t>& out)
 // Strict decoding: wrong type, wrong size, non-finite values are errors.
 bool decodePlayerState(const std::uint8_t* data, std::size_t size,
                        PlayerState& out);
+
+// The authority saw the player leave; peers drop their remote transform.
+// Wire format: [u8 type = 0x12][u32 net_id].
+bool encodePlayerGone(std::uint32_t netId, std::vector<std::uint8_t>& out);
+bool decodePlayerGone(const std::uint8_t* data, std::size_t size,
+                      std::uint32_t& netId);
 
 } // namespace coopnet

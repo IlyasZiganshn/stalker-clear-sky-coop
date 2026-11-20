@@ -75,4 +75,27 @@ bool decodePlayerState(const std::uint8_t* data, std::size_t size,
     return true;
 }
 
+bool encodePlayerGone(std::uint32_t netId, std::vector<std::uint8_t>& out) {
+    if (netId == 0) {
+        return false;
+    }
+    out.resize(kPlayerGoneSize);
+    out[0] = kPlayerGoneType;
+    putU32(out.data() + 1, netId);
+    return true;
+}
+
+bool decodePlayerGone(const std::uint8_t* data, std::size_t size,
+                      std::uint32_t& netId) {
+    if (data == nullptr || size != kPlayerGoneSize || data[0] != kPlayerGoneType) {
+        return false;
+    }
+    const std::uint32_t decoded = getU32(data + 1);
+    if (decoded == 0) {
+        return false;
+    }
+    netId = decoded;
+    return true;
+}
+
 } // namespace coopnet

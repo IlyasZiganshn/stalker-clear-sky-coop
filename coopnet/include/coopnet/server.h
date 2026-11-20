@@ -40,6 +40,15 @@ public:
 
     std::vector<PeerDelivery> takeDelivered();
 
+    // Join/leave transitions since the previous call. A peer that timed out
+    // appears as Left with the net_id it had while joined.
+    struct ServerEvent {
+        enum class Type { Joined, Left } type = Type::Joined;
+        Endpoint endpoint;
+        std::uint32_t netId = 0;
+    };
+    std::vector<ServerEvent> takeEvents();
+
     // False when the peer is unknown or not joined yet.
     bool send(const Endpoint& to, Channel channel,
               std::vector<std::uint8_t> payload);
@@ -63,6 +72,7 @@ private:
 
     NetServerConfig config_;
     std::map<Endpoint, ServerPeer> peers_;
+    std::map<Endpoint, std::uint32_t> reportedJoined_;
     std::size_t droppedDatagrams_ = 0;
 };
 

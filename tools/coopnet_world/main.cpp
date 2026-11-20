@@ -135,6 +135,7 @@ struct WorldClientStats {
     std::size_t sent = 0;
     std::size_t received = 0;
     std::size_t malformed = 0;
+    std::size_t gone = 0;
     std::uint32_t remoteNetId = 0;
     coopnet::PlayerState lastRemote;
     bool haveRemote = false;
@@ -206,6 +207,14 @@ int runWorldClient(std::uint16_t port, const std::string& name,
             coopnet::PlayerState state;
             if (!coopnet::decodePlayerState(delivery.payload.data(),
                                             delivery.payload.size(), state)) {
+                std::uint32_t goneNetId = 0;
+                if (coopnet::decodePlayerGone(delivery.payload.data(),
+                                              delivery.payload.size(),
+                                              goneNetId)) {
+                    ++stats.gone;
+                    stats.haveRemote = false;
+                    continue;
+                }
                 ++stats.malformed;
                 continue;
             }
@@ -221,12 +230,12 @@ int runWorldClient(std::uint16_t port, const std::string& name,
     if (peer.state() == coopnet::PeerState::Joined || stats.sent > 0) {
         result = 0;
     }
-    if (stats.haveRemote) {
+    if (stats.received > 0) {
         std::printf(
             "world client %s: net %u, sent %zu, received %zu, malformed %zu, "
-            "remote %u at %.1f %.1f %.1f, rtt %u ms\n",
+            "gone %zu, remote %u at %.1f %.1f %.1f, rtt %u ms\n",
             name.c_str(), stats.netId, stats.sent, stats.received,
-            stats.malformed, stats.remoteNetId, stats.lastRemote.x,
+            stats.malformed, stats.gone, stats.remoteNetId, stats.lastRemote.x,
             stats.lastRemote.y, stats.lastRemote.z, peer.session().rttMs());
     } else {
         std::printf(

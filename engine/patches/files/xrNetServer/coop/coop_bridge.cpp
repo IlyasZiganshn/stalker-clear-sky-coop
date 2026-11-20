@@ -82,6 +82,18 @@ void rememberRemote(Bridge& b, const coopnet::PlayerState& state, u32 nowMs)
     b.remoteMs[oldest] = nowMs;
 }
 
+void forgetRemote(Bridge& b, u32 netId)
+{
+    for (u32 i = 0; i < kMaxRemotes; ++i)
+    {
+        if (b.remotes[i].netId == netId)
+        {
+            b.remotes[i] = coopnet::PlayerState{};
+            b.remoteMs[i] = 0;
+        }
+    }
+}
+
 // Decodes application messages the peer handed over after the handshake.
 void handleAppMessage(Bridge& b, const coopnet::Session::Delivery& delivery,
     const coopnet::Endpoint* from, u32 nowMs)
@@ -106,19 +118,24 @@ void handleAppMessage(Bridge& b, const coopnet::Session::Delivery& delivery,
     }
 
     coopnet::PlayerState playerState;
-    if (!coopnet::decodePlayerState(delivery.payload.data(), delivery.payload.size(), playerState))
-        return;
-
-    if (b.server && from != nullptr)
+    if (coopnet::decodePlayerState(delivery.payload.data(), delivery.payload.size(), playerState))
     {
-        playerState.netId = b.server->netIdOf(*from);
-        if (playerState.netId == 0)
-            return;
-        std::vector<std::uint8_t> wire;
-        if (coopnet::encodePlayerState(playerState, wire))
-            b.server->broadcastExcept(*from, coopnet::Channel::Control, wire);
+        if (b.server && from != nullptr)
+        {
+            playerState.netId = b.server->netIdOf(*from);
+            if (playerState.netId == 0)
+                return;
+            std::vector<std::uint8_t> wire;
+            if (coopnet::encodePlayerState(playerState, wire))
+                b.server->broadcastExcept(*from, coopnet::Channel::Control, wire);
+        }
+        rememberRemote(b, playerState, nowMs);
+        return;
     }
-    rememberRemote(b, playerState, nowMs);
+
+    u32 goneNetId = 0;
+    if (coopnet::decodePlayerGone(delivery.payload.data(), delivery.payload.size(), goneNetId))
+        forgetRemote(b, goneNetId);
 }
 
 coopnet::PeerConfig makePeerConfig()
@@ -262,6 +279,15 @@ void BridgeTick(u32 nowMs)
             b.socket->sendTo(outgoing.to, outgoing.data.data(), outgoing.data.size());
         for (const auto& delivery : b.server->takeDelivered())
             handleAppMessage(b, delivery.delivery, &delivery.from, nowMs);
+        for (const auto& event : b.server->takeEvents())
+        {
+            if (event.type != coopnet::NetServer::ServerEvent::Type::Left)
+                continue;
+            forgetRemote(b, event.netId);
+            std::vector<std::uint8_t> wire;
+            if (coopnet::encodePlayerGone(event.netId, wire))
+                b.server->broadcast(coopnet::Channel::Control, wire);
+        }
         std::snprintf(b.status, sizeof(b.status), "coop: hosting on port %u, peers %llu, joined %llu",
             unsigned(b.port),
             static_cast<unsigned long long>(b.server->peerCount()),

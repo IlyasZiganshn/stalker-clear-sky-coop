@@ -52,5 +52,12 @@
 
 ## Сборка
 
-См. [docs/BUILD.md](../docs/BUILD.md). После первой успешной сборки здесь появится
-точный список зависимостей и команд — не по памяти.
+Проверено 2026-11-20 на этой машине: `./engine/build.ps1` доводит решение до
+`engine/src/bin/x64/Release/xrEngine.exe` (Release x64).
+
+- Нужны: Visual Studio Build Tools 2022 (MSVC 14.44), MSBuild, Windows SDK 10.
+  CMake для движка не используется — Windows-сборка идёт через `engine.sln`.
+- Зависимости: сабмодули (`Externals/*`) и NuGet-пакеты SDL2 2.32.4; `build.ps1`
+  сам скачивает `nuget.exe` в `tools/_local/` и делает restore.
+- Выход: `engine/src/bin/x64/Release/` — `xrEngine.exe` и все DLL движка.
+- Игра для сборки не нужна. Для запуска — легальная копия Clear Sky 1.5.10.

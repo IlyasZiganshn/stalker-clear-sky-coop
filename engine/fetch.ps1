@@ -50,4 +50,9 @@ if ($head -ne $commit) {
     throw "engine: expected $commit, got $head"
 }
 
+git -C $Destination submodule update --init --recursive --depth 1
+if ($LASTEXITCODE -ne 0) {
+    throw "engine: cannot update submodules"
+}
+
 Write-Host "engine: $repo @ $head ready in $Destination"

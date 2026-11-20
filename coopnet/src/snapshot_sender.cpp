@@ -2,9 +2,11 @@
 
 namespace coopnet {
 
-Snapshot SnapshotSender::next(const Snapshot& world, std::uint32_t ackedTick) {
+Snapshot SnapshotSender::next(const Snapshot& world,
+                              std::uint32_t clientBaseTick) {
     Snapshot message;
-    const Snapshot* base = ackedTick != 0 ? bases_.find(ackedTick) : nullptr;
+    const Snapshot* base =
+        clientBaseTick != 0 ? bases_.find(clientBaseTick) : nullptr;
     if (base != nullptr) {
         message = SnapshotDelta::makeDelta(*base, world);
     } else {

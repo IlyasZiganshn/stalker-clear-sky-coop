@@ -26,4 +26,9 @@ target_link_libraries(coopnet_echo PRIVATE coopnet Threads::Threads)
 add_test(NAME coopnet_echo COMMAND coopnet_echo local)
 set_tests_properties(coopnet_echo PROPERTIES TIMEOUT 40)
 
+add_executable(coopnet_snap tools/coopnet_snap/main.cpp)
+target_link_libraries(coopnet_snap PRIVATE coopnet Threads::Threads)
+add_test(NAME coopnet_snap COMMAND coopnet_snap local 3000)
+set_tests_properties(coopnet_snap PROPERTIES TIMEOUT 60)
+
 message(STATUS "clear_sky_coop: coopnet configured (engine build is separate)")

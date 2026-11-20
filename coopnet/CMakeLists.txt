@@ -10,6 +10,7 @@ add_library(coopnet STATIC
     src/net.cpp
     src/peer.cpp
     src/server.cpp
+    src/snapshot.cpp
 )
 target_include_directories(coopnet PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 if(WIN32)
@@ -28,6 +29,7 @@ add_executable(coopnet_tests
     tests/test_net.cpp
     tests/test_peer.cpp
     tests/test_server.cpp
+    tests/test_snapshot.cpp
 )
 target_link_libraries(coopnet_tests PRIVATE coopnet Threads::Threads)
 target_include_directories(coopnet_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)

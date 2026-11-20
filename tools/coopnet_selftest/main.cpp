@@ -2,16 +2,15 @@
 // Two sessions talk through the OS network stack with injected packet loss.
 // Not a game test: proves transport framing, reliability and reassembly.
 
-#include <winsock2.h>
-#include <ws2tcpip.h>
-
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <thread>
 #include <vector>
 
+#include "coopnet/net.h"
 #include "coopnet/session.h"
 
 namespace {
@@ -33,58 +32,22 @@ bool lost() {
     return nextRandom() % 100u < static_cast<std::uint32_t>(kLossPercent);
 }
 
-struct Endpoint {
-    SOCKET socket = INVALID_SOCKET;
-    sockaddr_in address{};
-
-    bool open() {
-        socket = ::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-        if (socket == INVALID_SOCKET) {
-            return false;
-        }
-        address.sin_family = AF_INET;
-        address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-        address.sin_port = 0;
-        if (::bind(socket, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
-            return false;
-        }
-        int length = sizeof(address);
-        if (::getsockname(socket, reinterpret_cast<sockaddr*>(&address), &length) != 0) {
-            return false;
-        }
-        u_long nonBlocking = 1;
-        return ::ioctlsocket(socket, FIONBIO, &nonBlocking) == 0;
-    }
-
-    void close() {
-        if (socket != INVALID_SOCKET) {
-            ::closesocket(socket);
-            socket = INVALID_SOCKET;
-        }
-    }
-};
-
-void transmit(const Endpoint& from, const Endpoint& to,
+void transmit(coopnet::UdpSocket& from, const coopnet::Endpoint& to,
               const std::vector<std::vector<std::uint8_t>>& datagrams) {
     for (const auto& datagram : datagrams) {
         if (lost()) {
             continue;
         }
-        ::sendto(from.socket, reinterpret_cast<const char*>(datagram.data()),
-                 static_cast<int>(datagram.size()), 0,
-                 reinterpret_cast<const sockaddr*>(&to.address), sizeof(to.address));
+        from.sendTo(to, datagram.data(), datagram.size());
     }
 }
 
-void receive(const Endpoint& endpoint, coopnet::Session& session, std::uint32_t nowMs) {
+void receive(coopnet::UdpSocket& socket, coopnet::Session& session,
+             std::uint32_t nowMs) {
     std::uint8_t buffer[2048];
+    coopnet::Endpoint from;
     for (;;) {
-        sockaddr_in from{};
-        int fromLength = sizeof(from);
-        const int received =
-            ::recvfrom(endpoint.socket, reinterpret_cast<char*>(buffer),
-                       static_cast<int>(sizeof(buffer)), 0,
-                       reinterpret_cast<sockaddr*>(&from), &fromLength);
+        const std::int32_t received = socket.receiveFrom(buffer, sizeof(buffer), from);
         if (received <= 0) {
             return;
         }
@@ -111,18 +74,22 @@ std::vector<std::uint8_t> makePayload(std::size_t index) {
 }  // namespace
 
 int main() {
-    WSADATA wsa{};
-    if (::WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
-        std::printf("selftest: WSAStartup failed\n");
+    coopnet::NetworkScope network;
+    if (!network.ok()) {
+        std::printf("selftest: network init failed\n");
         return 1;
     }
 
-    Endpoint clientEndpoint;
-    Endpoint serverEndpoint;
-    if (!clientEndpoint.open() || !serverEndpoint.open()) {
+    coopnet::UdpSocket clientSocket;
+    coopnet::UdpSocket serverSocket;
+    if (!clientSocket.open() || !serverSocket.open()) {
         std::printf("selftest: cannot open UDP sockets\n");
         return 1;
     }
+    const coopnet::Endpoint clientEndpoint =
+        coopnet::Endpoint::loopback(clientSocket.localPort());
+    const coopnet::Endpoint serverEndpoint =
+        coopnet::Endpoint::loopback(serverSocket.localPort());
 
     coopnet::Session client;
     coopnet::Session server;
@@ -146,10 +113,10 @@ int main() {
             ++nextToSend;
         }
 
-        transmit(clientEndpoint, serverEndpoint, client.poll(nowMs));
-        receive(serverEndpoint, server, nowMs);
-        transmit(serverEndpoint, clientEndpoint, server.poll(nowMs));
-        receive(clientEndpoint, client, nowMs);
+        transmit(clientSocket, serverEndpoint, client.poll(nowMs));
+        receive(serverSocket, server, nowMs);
+        transmit(serverSocket, clientEndpoint, server.poll(nowMs));
+        receive(clientSocket, client, nowMs);
 
         auto delivered = server.takeDelivered();
         for (auto& delivery : delivered) {
@@ -163,7 +130,7 @@ int main() {
             break;
         }
 
-        ::Sleep(1);
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
     bool orderOk = received.size() == static_cast<std::size_t>(kMessageCount);
@@ -195,10 +162,6 @@ int main() {
         static_cast<unsigned long long>(client.stats().malformed +
                                         server.stats().malformed),
         nowMs, kLossPercent);
-
-    clientEndpoint.close();
-    serverEndpoint.close();
-    ::WSACleanup();
 
     if (!ok || !orderOk) {
         std::printf("selftest: FAILED\n");

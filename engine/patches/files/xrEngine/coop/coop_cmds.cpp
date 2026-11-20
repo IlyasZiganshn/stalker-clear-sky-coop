@@ -98,7 +98,32 @@ class CCC_CoopStatus : public IConsole_Command
 public:
     CCC_CoopStatus(pcstr name) : IConsole_Command(name) { bEmptyArgsHandled = true; }
 
-    void Execute(pcstr) override { Msg("* %s", coop::BridgeStatus()); }
+    void Execute(pcstr) override
+    {
+        Msg("* %s", coop::BridgeStatus());
+        pcstr chat = coop::BridgeLastChat();
+        if (chat[0])
+            Msg("* coop: last chat %s", chat);
+    }
+};
+
+class CCC_CoopSay : public IConsole_Command
+{
+public:
+    CCC_CoopSay(pcstr name) : IConsole_Command(name) {}
+
+    void Execute(pcstr args) override
+    {
+        if (!args[0])
+        {
+            InvalidSyntax();
+            return;
+        }
+        if (!coop::BridgeSay(args))
+            Msg("* coop: cannot send message (not connected or text too long)");
+    }
+
+    void Info(TInfo& I) override { xr_strcpy(I, "text"); }
 };
 } // namespace
 
@@ -108,4 +133,5 @@ void CCC_RegisterCoop()
     CMD1(CCC_CoopConnect, "coop_connect");
     CMD1(CCC_CoopStop, "coop_stop");
     CMD1(CCC_CoopStatus, "coop_status");
+    CMD1(CCC_CoopSay, "coop_say");
 }

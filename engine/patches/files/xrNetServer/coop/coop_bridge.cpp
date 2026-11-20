@@ -4,7 +4,9 @@
 
 #include <cstdio>
 #include <memory>
+#include <vector>
 
+#include "coopnet/app_message.h"
 #include "coopnet/net.h"
 #include "coopnet/peer.h"
 #include "coopnet/server.h"
@@ -22,12 +24,46 @@ struct Bridge
     coopnet::Endpoint serverEndpoint;
     u16 port = 0;
     char status[192] = "coop: off";
+    char lastChat[256] = "";
 };
 
 Bridge& state()
 {
     static Bridge instance;
     return instance;
+}
+
+void rememberChat(const coopnet::AppMessage& message)
+{
+    Bridge& b = state();
+    if (message.sender == 0)
+        std::snprintf(b.lastChat, sizeof(b.lastChat), "host: %s", message.text.c_str());
+    else
+        std::snprintf(b.lastChat, sizeof(b.lastChat), "player %u: %s",
+            unsigned(message.sender), message.text.c_str());
+}
+
+// Decodes application messages the peer handed over after the handshake.
+void handleAppMessage(Bridge& b, const coopnet::Session::Delivery& delivery,
+    const coopnet::Endpoint* from)
+{
+    if (delivery.channel != coopnet::Channel::Control)
+        return;
+
+    coopnet::AppMessage message;
+    if (!coopnet::decodeAppMessage(delivery.payload.data(), delivery.payload.size(), message))
+        return;
+
+    if (b.server && from != nullptr)
+    {
+        message.sender = b.server->netIdOf(*from);
+        if (message.sender == 0)
+            return;
+        std::vector<std::uint8_t> wire;
+        if (coopnet::encodeAppMessage(message, wire))
+            b.server->broadcastExcept(*from, coopnet::Channel::Control, wire);
+    }
+    rememberChat(message);
 }
 
 coopnet::PeerConfig makePeerConfig()
@@ -63,6 +99,7 @@ void BridgeStop()
     b.socket.reset();
     b.network.reset();
     b.port = 0;
+    b.lastChat[0] = 0;
     std::snprintf(b.status, sizeof(b.status), "coop: off");
 }
 
@@ -160,8 +197,8 @@ void BridgeTick(u32 nowMs)
     {
         for (const auto& outgoing : b.server->poll(nowMs))
             b.socket->sendTo(outgoing.to, outgoing.data.data(), outgoing.data.size());
-        // M1: transport only; application payloads are drained and ignored.
-        b.server->takeDelivered();
+        for (const auto& delivery : b.server->takeDelivered())
+            handleAppMessage(b, delivery.delivery, &delivery.from);
         std::snprintf(b.status, sizeof(b.status), "coop: hosting on port %u, peers %llu, joined %llu",
             unsigned(b.port),
             static_cast<unsigned long long>(b.server->peerCount()),
@@ -173,7 +210,8 @@ void BridgeTick(u32 nowMs)
     {
         for (const auto& datagram : b.client->poll(nowMs))
             b.socket->sendTo(b.serverEndpoint, datagram.data(), datagram.size());
-        b.client->takeDelivered();
+        for (const auto& delivery : b.client->takeDelivered())
+            handleAppMessage(b, delivery, nullptr);
 
         if (b.client->state() == coopnet::PeerState::Joined)
             std::snprintf(b.status, sizeof(b.status), "coop: joined %s, rtt %u ms",
@@ -190,6 +228,39 @@ bool BridgeActive()
 {
     Bridge& b = state();
     return b.server != nullptr || b.client != nullptr;
+}
+
+bool BridgeSay(pcstr text)
+{
+    Bridge& b = state();
+    if (!text || !text[0])
+        return false;
+
+    coopnet::AppMessage message;
+    message.text = text;
+    std::vector<std::uint8_t> wire;
+    if (!coopnet::encodeAppMessage(message, wire))
+        return false;
+
+    if (b.client)
+    {
+        if (b.client->state() != coopnet::PeerState::Joined)
+            return false;
+        return b.client->send(coopnet::Channel::Control, wire);
+    }
+
+    if (b.server)
+    {
+        rememberChat(message);
+        b.server->broadcast(coopnet::Channel::Control, wire);
+        return true;
+    }
+    return false;
+}
+
+pcstr BridgeLastChat()
+{
+    return state().lastChat;
 }
 
 u32 BridgePeerCount()

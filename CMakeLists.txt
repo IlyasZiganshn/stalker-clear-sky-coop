@@ -42,6 +42,11 @@ set_tests_properties(coopnet_move PROPERTIES TIMEOUT 60)
 add_test(NAME coopnet_move_two COMMAND coopnet_move two 3000)
 set_tests_properties(coopnet_move_two PROPERTIES TIMEOUT 60)
 
+add_executable(coopnet_chat tools/coopnet_chat/main.cpp)
+target_link_libraries(coopnet_chat PRIVATE coopnet Threads::Threads)
+add_test(NAME coopnet_chat COMMAND coopnet_chat local 3000)
+set_tests_properties(coopnet_chat PROPERTIES TIMEOUT 60)
+
 add_executable(net_sim tools/net_sim/main.cpp)
 target_link_libraries(net_sim PRIVATE coopnet Threads::Threads)
 
@@ -57,6 +62,12 @@ if(WIN32)
             -File ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_move_relay.ps1
             -BuildDir ${CMAKE_BINARY_DIR})
     set_tests_properties(coopnet_move_relay PROPERTIES TIMEOUT 120)
+
+    add_test(NAME coopnet_chat_relay
+        COMMAND powershell -NoProfile -ExecutionPolicy Bypass
+            -File ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_chat_relay.ps1
+            -BuildDir ${CMAKE_BINARY_DIR})
+    set_tests_properties(coopnet_chat_relay PROPERTIES TIMEOUT 120)
 endif()
 
 message(STATUS "clear_sky_coop: coopnet configured (engine build is separate)")

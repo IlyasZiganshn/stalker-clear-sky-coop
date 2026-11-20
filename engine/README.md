@@ -64,8 +64,10 @@
 
 - `engine/patches/files/xrNetServer/coop/` — мост `coop::Bridge*`, экспортируется из
   `xrNetServer.dll`: сессии на игровом потоке, без своего потока и таймеров.
+  Через него уже ходят прикладные сообщения (`C_CHAT`): сервер пересылает строку
+  всем, кроме автора, последняя строка доступна как `BridgeLastChat()`.
 - `engine/patches/files/xrEngine/coop/coop_cmds.cpp` — команды `coop_listen [port]`,
-  `coop_connect host[:port]`, `coop_stop`, `coop_status`.
+  `coop_connect host[:port]`, `coop_say <text>`, `coop_stop`, `coop_status`.
 - `engine/patches/0001-coopnet-in-engine.patch` — `xrNetServer.vcxproj` компилирует
   `coopnet/src/*.cpp` (include `coopnet/include`), `xrEngine.vcxproj` — команды,
   `CCC_Register` их регистрирует, `FrameMove` тикает мост.
@@ -74,7 +76,8 @@
 
 Проверено 2026-11-20: `apply.ps1` + `build.ps1` дают `xrEngine.exe`;
 `dumpbin /exports xrNetServer.dll` показывает `coop::BridgeTick`, `BridgeStartServer`,
-`BridgeStartClient`, `BridgeStop`, `BridgeStatus`, `BridgeActive`, `BridgePeerCount`.
+`BridgeStartClient`, `BridgeStop`, `BridgeStatus`, `BridgeActive`, `BridgePeerCount`,
+`BridgeSay`, `BridgeLastChat`.
 В игре не проверялось — нужна легальная копия Clear Sky 1.5.10.
 
 ## Сборка

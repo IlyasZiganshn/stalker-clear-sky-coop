@@ -45,6 +45,9 @@ public:
               std::vector<std::uint8_t> payload);
     // Returns how many joined peers accepted the message.
     std::size_t broadcast(Channel channel, const std::vector<std::uint8_t>& payload);
+    // Same, skipping one peer (a chat author does not need their own message).
+    std::size_t broadcastExcept(const Endpoint& except, Channel channel,
+                                const std::vector<std::uint8_t>& payload);
 
     bool isJoined(const Endpoint& endpoint) const;
     // Player identity assigned during the handshake; 0 when the peer is

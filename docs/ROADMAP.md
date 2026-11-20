@@ -61,7 +61,9 @@ ack ничего не подтверждает, но входы всё равн�
 Форк OpenXRay получен (`engine/fetch.ps1`), патчится (`engine/apply.ps1`) и
 собирается (`engine/build.ps1`): `xrEngine.exe` Release x64. `coopnet` компилируется
 внутрь `xrNetServer.dll`, мост `coop::Bridge*` тикает из `CRenderDevice::FrameMove`,
-в консоли есть `coop_listen` / `coop_connect` / `coop_stop` / `coop_status`.
+в консоли есть `coop_listen` / `coop_connect` / `coop_say` / `coop_stop` /
+`coop_status`. Через мост уже ходят прикладные сообщения: клиент шлёт `coop_say`,
+сервер пересылает всем, кроме автора; последняя строка видна в `coop_status`.
 Осталось: спавн второго персонажа в мире, репликация позиции, предсказание в
 движке (сейчас — в коде-демо), спайк headless. Игровая проверка — после появления
 легальной копии игры.

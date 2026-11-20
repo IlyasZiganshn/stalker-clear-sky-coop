@@ -72,6 +72,20 @@ std::size_t NetServer::broadcast(Channel channel,
     return sent;
 }
 
+std::size_t NetServer::broadcastExcept(const Endpoint& except, Channel channel,
+                                       const std::vector<std::uint8_t>& payload) {
+    std::size_t sent = 0;
+    for (auto& [endpoint, peer] : peers_) {
+        if (endpoint == except) {
+            continue;
+        }
+        if (peer.state() == PeerState::Joined && peer.send(channel, payload)) {
+            ++sent;
+        }
+    }
+    return sent;
+}
+
 bool NetServer::isJoined(const Endpoint& endpoint) const {
     const auto it = peers_.find(endpoint);
     return it != peers_.end() && it->second.state() == PeerState::Joined;

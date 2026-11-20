@@ -14,16 +14,19 @@ struct PlayerState {
     float y = 0.f;
     float z = 0.f;
     float yaw = 0.f;
+    // Engine movement bits (mcFwd, mcCrouch, mcJump, ...) for the doll
+    // animation. Discrete: never blended between samples.
+    std::uint16_t bodyState = 0;
 };
 
 constexpr std::uint8_t kPlayerStateType = 0x11;
-constexpr std::size_t kPlayerStateSize = 1 + 4 + 4 * 4;
+constexpr std::size_t kPlayerStateSize = 1 + 4 + 4 * 4 + 2;
 
 constexpr std::uint8_t kPlayerGoneType = 0x12;
 constexpr std::size_t kPlayerGoneSize = 1 + 4;
 
-// Wire format: [u8 type = 0x11][u32 net_id][f32 x][f32 y][f32 z][f32 yaw].
-// Encoding fails for net_id 0 or non-finite coordinates.
+// Wire format: [u8 type = 0x11][u32 net_id][f32 x][f32 y][f32 z][f32 yaw]
+// [u16 body_state]. Encoding fails for net_id 0 or non-finite coordinates.
 bool encodePlayerState(const PlayerState& state, std::vector<std::uint8_t>& out);
 
 // Strict decoding: wrong type, wrong size, non-finite values are errors.

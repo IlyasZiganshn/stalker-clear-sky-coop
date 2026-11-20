@@ -10,7 +10,8 @@ namespace coopnet {
 
 // Smooths the low-rate player transform stream: the last two samples of every
 // peer are kept and sampled slightly in the past, so a remote doll moves
-// continuously between 20 Hz updates instead of snapping.
+// continuously between 20 Hz updates instead of snapping. Discrete fields
+// (body state) are taken from the older sample.
 class PlayerInterpolator {
 public:
     static constexpr std::size_t kMaxTracks = 16;

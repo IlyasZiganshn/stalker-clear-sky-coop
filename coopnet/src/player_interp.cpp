@@ -106,6 +106,9 @@ std::uint32_t PlayerInterpolator::sample(std::uint32_t nowMs,
                         wrapAngle(track.latest.yaw - track.previous.yaw);
                     state.yaw =
                         wrapAngle(track.previous.yaw + deltaYaw * t);
+                    // Body state is discrete: blend it would be meaningless, so
+                    // it switches together with the sample it belongs to.
+                    state.bodyState = track.previous.bodyState;
                 }
             }
         }

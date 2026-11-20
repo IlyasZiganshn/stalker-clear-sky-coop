@@ -12,11 +12,13 @@ namespace {
 
 constexpr float kPi = 3.14159265358979323846f;
 
-PlayerState player(std::uint32_t netId, float x, float yaw = 0.0f) {
+PlayerState player(std::uint32_t netId, float x, float yaw = 0.0f,
+                   std::uint16_t bodyState = 0) {
     PlayerState state;
     state.netId = netId;
     state.x = x;
     state.yaw = yaw;
+    state.bodyState = bodyState;
     return state;
 }
 
@@ -37,6 +39,22 @@ COOP_TEST(player_interp_blends_position_and_yaw) {
     CHECK_EQ(count, 1u);
     CHECK(near(out[0].x, 5.0f));
     CHECK(near(out[0].yaw, kPi / 4.0f));
+}
+
+COOP_TEST(player_interp_holds_discrete_body_state) {
+    PlayerInterpolator interp;
+    interp.push(player(1, 0.0f, 0.0f, 2), 0);
+    interp.push(player(1, 10.0f, 0.0f, 4), 100);
+
+    PlayerState out[1];
+    // Halfway between the samples the transform is blended, the body state is
+    // not: it still belongs to the older sample.
+    CHECK_EQ(interp.sample(50, 0, 2000, out, 1), 1u);
+    CHECK_EQ(out[0].bodyState, std::uint16_t{2});
+
+    // Once the render time reaches the newer sample, its body state is used.
+    CHECK_EQ(interp.sample(150, 0, 2000, out, 1), 1u);
+    CHECK_EQ(out[0].bodyState, std::uint16_t{4});
 }
 
 COOP_TEST(player_interp_takes_shortest_arc) {

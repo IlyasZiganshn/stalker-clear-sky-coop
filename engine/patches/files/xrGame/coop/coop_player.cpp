@@ -214,6 +214,14 @@ void ApplyRemoteTransforms(const PlayerInput* inputs, u32 inputCount)
         object->XFORM().setXYZ(0.f, players[i].yaw, 0.f);
         object->Position().set(players[i].x, players[i].y, players[i].z);
         object->spatial_move();
+
+        // The owner still sends its movement bits with the transform, so the
+        // animation does not freeze between the rare input samples.
+        if (CActor* actor = smart_cast<CActor*>(object))
+        {
+            actor->SetBodyState(players[i].bodyState);
+            actor->g_SetAnimation(players[i].bodyState);
+        }
     }
 }
 
@@ -355,12 +363,13 @@ void PublishDollStates(const PlayerInput* inputs, u32 inputCount)
         const u16 gameId = FindRemoteGameId(inputs[i].netId);
         if (gameId == 0xFFFF)
             continue;
-        IGameObject* object = Level().Objects.net_Find(gameId);
-        if (object == nullptr)
+        CActor* actor = smart_cast<CActor*>(Level().Objects.net_Find(gameId));
+        if (actor == nullptr)
             continue;
-        const Fvector& position = object->Position();
+        const Fvector& position = actor->Position();
         BridgePublishRemoteState(inputs[i].netId, position.x, position.y,
-            position.z, inputs[i].yaw);
+            position.z, inputs[i].yaw,
+            static_cast<u16>(actor->MovingState() & 0x7FFF));
     }
 }
 
@@ -431,7 +440,8 @@ void PublishLocalPlayer(CActor* actor)
 
     const Fvector& position = actor->Position();
     BridgePublishLocalPlayer(position.x, position.y, position.z,
-        actor->Orientation().yaw);
+        actor->Orientation().yaw,
+        static_cast<u16>(actor->MovingState() & 0x7FFF));
     PublishLocalInput(actor);
 
     const shared_str& levelName = Level().name();

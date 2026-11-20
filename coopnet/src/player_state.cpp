@@ -21,6 +21,16 @@ std::uint32_t getU32(const std::uint8_t* in) {
            (static_cast<std::uint32_t>(in[3]) << 24);
 }
 
+void putU16(std::uint8_t* out, std::uint16_t value) {
+    out[0] = static_cast<std::uint8_t>(value & 0xFF);
+    out[1] = static_cast<std::uint8_t>((value >> 8) & 0xFF);
+}
+
+std::uint16_t getU16(const std::uint8_t* in) {
+    return static_cast<std::uint16_t>(static_cast<std::uint16_t>(in[0]) |
+                                      (static_cast<std::uint16_t>(in[1]) << 8));
+}
+
 void putF32(std::uint8_t* out, float value) {
     std::uint32_t bits = 0;
     std::memcpy(&bits, &value, sizeof(bits));
@@ -52,6 +62,7 @@ bool encodePlayerState(const PlayerState& state,
     putF32(out.data() + 9, state.y);
     putF32(out.data() + 13, state.z);
     putF32(out.data() + 17, state.yaw);
+    putU16(out.data() + 21, state.bodyState);
     return true;
 }
 
@@ -66,6 +77,7 @@ bool decodePlayerState(const std::uint8_t* data, std::size_t size,
     state.y = getF32(data + 9);
     state.z = getF32(data + 13);
     state.yaw = getF32(data + 17);
+    state.bodyState = getU16(data + 21);
     if (state.netId == 0 || !std::isfinite(state.x) ||
         !std::isfinite(state.y) || !std::isfinite(state.z) ||
         !std::isfinite(state.yaw)) {

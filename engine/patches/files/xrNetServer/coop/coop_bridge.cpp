@@ -620,7 +620,8 @@ pcstr BridgeLastChat()
     return state().lastChat;
 }
 
-void BridgePublishLocalPlayer(float x, float y, float z, float yaw)
+void BridgePublishLocalPlayer(float x, float y, float z, float yaw,
+    u16 bodyState)
 {
     Bridge& b = state();
     if (!b.socket)
@@ -633,6 +634,7 @@ void BridgePublishLocalPlayer(float x, float y, float z, float yaw)
     sample.y = y;
     sample.z = z;
     sample.yaw = yaw;
+    sample.bodyState = static_cast<std::uint16_t>(bodyState & 0x7FFF);
 
     std::vector<std::uint8_t> wire;
     if (b.client)
@@ -677,6 +679,7 @@ u32 BridgeRemotePlayers(RemotePlayer* out, u32 capacity)
         player.y = players[i].y;
         player.z = players[i].z;
         player.yaw = players[i].yaw;
+        player.bodyState = players[i].bodyState;
     }
     return count < capacity ? count : capacity;
 }
@@ -725,7 +728,8 @@ u32 BridgeRemoteInputs(PlayerInput* out, u32 capacity)
     return written;
 }
 
-void BridgePublishRemoteState(u32 netId, float x, float y, float z, float yaw)
+void BridgePublishRemoteState(u32 netId, float x, float y, float z, float yaw,
+    u16 bodyState)
 {
     Bridge& b = state();
     if (b.server == nullptr || netId == 0)
@@ -737,6 +741,7 @@ void BridgePublishRemoteState(u32 netId, float x, float y, float z, float yaw)
     sample.y = y;
     sample.z = z;
     sample.yaw = yaw;
+    sample.bodyState = static_cast<std::uint16_t>(bodyState & 0x7FFF);
 
     std::vector<std::uint8_t> wire;
     if (coopnet::encodePlayerState(sample, wire))

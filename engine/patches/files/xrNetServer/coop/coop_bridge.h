@@ -30,11 +30,14 @@ struct RemotePlayer
     float y = 0.f;
     float z = 0.f;
     float yaw = 0.f;
+    u16 bodyState = 0; // engine movement bits (mc*), for the doll animation
 };
 
-// Publishes the local player transform. The bridge rate-limits itself (20 Hz),
-// so calling it every frame is fine; no-op without a session.
-XRNETSERVER_API void BridgePublishLocalPlayer(float x, float y, float z, float yaw);
+// Publishes the local player transform and its movement bits. The bridge
+// rate-limits itself (20 Hz), so calling it every frame is fine; no-op without
+// a session.
+XRNETSERVER_API void BridgePublishLocalPlayer(float x, float y, float z, float yaw,
+    u16 bodyState);
 // Copies up to capacity fresh remote transforms (stale after 2 s) into out and
 // returns how many were written.
 XRNETSERVER_API u32 BridgeRemotePlayers(RemotePlayer* out, u32 capacity);
@@ -71,11 +74,12 @@ XRNETSERVER_API void BridgePublishLocalInput(float moveX, float moveY, float yaw
 // Copies the latest input of every remote player (stale after 2 s).
 XRNETSERVER_API u32 BridgeRemoteInputs(PlayerInput* out, u32 capacity);
 
-// Host only: broadcasts the transform of a doll simulated from input, so every
-// peer sees the authority's position instead of the owner's prediction. Call it
-// at snapshot rate (20 Hz); the bridge does not throttle per doll.
+// Host only: broadcasts the transform and movement bits of a doll simulated
+// from input, so every peer sees the authority's position instead of the
+// owner's prediction. Call it at snapshot rate (20 Hz); the bridge does not
+// throttle per doll.
 XRNETSERVER_API void BridgePublishRemoteState(u32 netId, float x, float y,
-    float z, float yaw);
+    float z, float yaw, u16 bodyState);
 
 // One serialized entity spawn (CSE_Abstract bytes) tagged with its owner.
 // The bridge never parses the blob; the game side does.

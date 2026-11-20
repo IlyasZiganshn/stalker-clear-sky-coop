@@ -18,6 +18,7 @@ add_library(coopnet STATIC
     src/delta.cpp
     src/baseline.cpp
     src/snapshot_sender.cpp
+    src/ids.cpp
 )
 target_include_directories(coopnet PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 if(WIN32)
@@ -45,6 +46,7 @@ add_executable(coopnet_tests
     tests/test_baseline.cpp
     tests/test_snapshot_sender.cpp
     tests/test_world.cpp
+    tests/test_ids.cpp
 )
 target_link_libraries(coopnet_tests PRIVATE coopnet Threads::Threads)
 target_include_directories(coopnet_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)

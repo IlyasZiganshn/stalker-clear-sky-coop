@@ -6,6 +6,7 @@ add_library(coopnet STATIC
     src/reliable.cpp
     src/fragment.cpp
     src/session.cpp
+    src/handshake.cpp
 )
 target_include_directories(coopnet PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
@@ -17,6 +18,7 @@ add_executable(coopnet_tests
     tests/test_reliable.cpp
     tests/test_fragment.cpp
     tests/test_session.cpp
+    tests/test_handshake.cpp
 )
 target_link_libraries(coopnet_tests PRIVATE coopnet)
 target_include_directories(coopnet_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)

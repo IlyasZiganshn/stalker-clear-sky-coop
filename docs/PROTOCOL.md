@@ -67,16 +67,39 @@ Handshake (`C_HELLO`/`S_HELLO_ACK`), keepalive, реконнект, обрабо
 
 ## Handshake
 
+Сообщения идут по каналу control. Первый байт — опкод:
+
+| Опкод | Сообщение |
+|---|---|
+| 1 | `C_HELLO` |
+| 2 | `S_HELLO_ACK` |
+| 3 | `C_JOIN` |
+| 4 | `S_JOIN_OK` |
+| 5 | `S_JOIN_DENY` |
+
 ```
-C_HELLO      { u16 proto, u32 build_hash, string name, u32 token }
-S_HELLO_ACK  { u32 client_id, u32 session, u16 snap_hz, u16 tick_hz }
-C_JOIN       { u8 slot }
-S_JOIN_OK    { u32 net_id, ServerRules rules }
-S_JOIN_DENY  { u8 reason }
+C_HELLO      { u8 op, u16 proto, u32 build_hash, string name, u32 token }
+S_HELLO_ACK  { u8 op, u32 client_id, u32 session, u16 snap_hz, u16 tick_hz }
+C_JOIN       { u8 op, u8 slot }
+S_JOIN_OK    { u8 op, u32 net_id, ServerRules rules }
+S_JOIN_DENY  { u8 op, u8 reason }
+
+ServerRules  { u8 difficulty, u8 max_players, bool friendly_fire,
+               align, u8 time_speed_percent }
+string       { u16 length, align, u8 bytes[length] }   // UTF-8, length <= 32
 ```
 
-`build_hash` — хеш сборки движка и набора скриптов. Несовпадение = отказ с человеческим
-текстом. `token` — для реконнекта в течение сессии.
+- Все значения многобайтные — little-endian; после строк и `bool` поток
+  выравнивается на байт.
+- Декодирование строгое: неверный опкод, обрезанные или лишние байты,
+  неизвестная причина отказа и имя длиннее 32 байт — ошибка формата.
+- `build_hash` — хеш сборки движка и набора скриптов. Несовпадение = отказ с
+  человеческим текстом. `token` — для реконнекта в течение сессии (0 при первом
+  подключении).
+- Причины отказа: 1 — версия протокола, 2 — билд, 3 — сервер полон, 4 — имя,
+  5 — занято, 6 — бан.
+
+Реализация: `coopnet/handshake.h`, `coopnet/src/handshake.cpp`.
 
 ## Снапшоты
 

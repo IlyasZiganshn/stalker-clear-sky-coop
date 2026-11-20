@@ -178,6 +178,28 @@ void DespawnRemote(u32 netId)
     Msg("* coop: remote player %u removed (game id %u)", netId, gameId);
 }
 
+// Snaps remote dolls to the last transform heard from the authority. There is
+// no interpolation here yet: the bridge already rate-limits samples to 20 Hz.
+void ApplyRemoteTransforms()
+{
+    RemotePlayer players[kMaxRemoteEntities];
+    const u32 count = BridgeRemotePlayers(players, kMaxRemoteEntities);
+    for (u32 i = 0; i < count; ++i)
+    {
+        const u16 gameId = FindRemoteGameId(players[i].netId);
+        if (gameId == 0xFFFF)
+            continue;
+        IGameObject* object = Level().Objects.net_Find(gameId);
+        if (object == nullptr)
+            continue;
+        // setXYZ rebuilds the rotation and clears the matrix translation, so
+        // the position has to be restored after it.
+        object->XFORM().setXYZ(0.f, players[i].yaw, 0.f);
+        object->Position().set(players[i].x, players[i].y, players[i].z);
+        object->spatial_move();
+    }
+}
+
 void PollRemoteEntities()
 {
     SpawnInfo spawns[4];
@@ -189,6 +211,8 @@ void PollRemoteEntities()
     const u32 goneCount = BridgeTakeDespawns(gone, 8);
     for (u32 i = 0; i < goneCount; ++i)
         DespawnRemote(gone[i]);
+
+    ApplyRemoteTransforms();
 }
 } // namespace
 

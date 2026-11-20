@@ -28,6 +28,7 @@ user.ltx
 
 # tooling
 /tools/_local/
+engine/src/
 *.pdb
 *.ilk
 *.obj

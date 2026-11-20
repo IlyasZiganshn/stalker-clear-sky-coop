@@ -299,7 +299,9 @@ int serveMoving(coopnet::UdpSocket& socket, std::atomic<bool>* stop) {
             if (actor != actors.end()) {
                 actor->second.applyInput(input, kDt);
             }
-            client.ackedTick = input.ackSnapshot;
+            if (input.ackSnapshot > client.ackedTick) {
+                client.ackedTick = input.ackSnapshot;
+            }
         }
 
         if (now >= nextSnapshotMs) {
@@ -319,7 +321,7 @@ int serveMoving(coopnet::UdpSocket& socket, std::atomic<bool>* stop) {
                 const bool lagging =
                     client.ackedTick == 0 ||
                     tick - client.ackedTick > kMaxAckLagTicks;
-                const std::uint32_t base = lagging ? 0 : client.sentTick;
+                const std::uint32_t base = lagging ? 0 : client.ackedTick;
 
                 coopnet::Snapshot message = client.replicator.next(
                     world, actor->second.state().position, base);

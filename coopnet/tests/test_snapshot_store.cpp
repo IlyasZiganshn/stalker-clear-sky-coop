@@ -135,6 +135,89 @@ COOP_TEST(store_keeps_last_processed_input) {
     CHECK_EQ(store.lastProcessedInput(), std::uint32_t{0});
 }
 
+COOP_TEST(store_applies_delta_from_retained_older_base) {
+    SnapshotStore store;
+    CHECK(store.apply(fullSnapshot(10)));
+
+    Snapshot first;
+    first.tick = 11;
+    first.baseTick = 10;
+    first.entities.push_back(makeEntity(1, 9.0f, 0.0f, 0.0f, 100));
+    CHECK(store.apply(first));
+
+    // The server built the next delta from an older acknowledged tick; the
+    // world at 10 is still retained, so the chain does not break.
+    Snapshot second;
+    second.tick = 12;
+    second.baseTick = 10;
+    second.entities.push_back(makeEntity(3, 4.0f, 4.0f, 4.0f, 75));
+    CHECK(store.apply(second));
+
+    CHECK_EQ(store.tick(), std::uint32_t{12});
+    CHECK_EQ(store.size(), std::size_t{3});
+    const EntityState* moved = store.find(2);
+    CHECK(moved != nullptr);
+    if (moved != nullptr) {
+        CHECK(moved->position.x == -1.0f);  // unchanged since tick 10
+    }
+    CHECK(store.find(3) != nullptr);
+}
+
+COOP_TEST(store_ignores_superseded_delta) {
+    SnapshotStore store;
+    CHECK(store.apply(fullSnapshot(10)));
+
+    Snapshot newer;
+    newer.tick = 12;
+    newer.baseTick = 10;
+    newer.entities.push_back(makeEntity(1, 9.0f, 0.0f, 0.0f, 100));
+    CHECK(store.apply(newer));
+
+    // Late arrival of a state we already passed: keep current world.
+    Snapshot late;
+    late.tick = 11;
+    late.baseTick = 10;
+    late.entities.push_back(makeEntity(1, -50.0f, 0.0f, 0.0f, 1));
+    CHECK(store.apply(late));
+    CHECK_EQ(store.tick(), std::uint32_t{12});
+    const EntityState* entity = store.find(1);
+    CHECK(entity != nullptr);
+    if (entity != nullptr) {
+        CHECK(entity->position.x == 9.0f);
+        CHECK_EQ(entity->health, std::uint16_t{100});
+    }
+}
+
+COOP_TEST(store_rejects_delta_when_base_evicted) {
+    SnapshotStore store;
+    CHECK(store.apply(fullSnapshot(10)));
+
+    for (std::uint32_t i = 1; i <= SnapshotStore::kHistory; ++i) {
+        Snapshot delta;
+        delta.tick = 10 + i;
+        delta.baseTick = 9 + i;
+        delta.entities.push_back(makeEntity(1, static_cast<float>(i), 0.0f, 0.0f, 100));
+        CHECK(store.apply(delta));
+    }
+
+    Snapshot expired;
+    expired.tick = 10 + SnapshotStore::kHistory + 1;
+    expired.baseTick = 10;
+    CHECK(!store.apply(expired));
+    CHECK_EQ(store.tick(), std::uint32_t{10 + SnapshotStore::kHistory});
+}
+
+COOP_TEST(store_rejects_delta_with_future_base) {
+    SnapshotStore store;
+    CHECK(store.apply(fullSnapshot(10)));
+
+    Snapshot future;
+    future.tick = 14;
+    future.baseTick = 12;
+    CHECK(!store.apply(future));
+    CHECK_EQ(store.tick(), std::uint32_t{10});
+}
+
 COOP_TEST(store_clear_resets_everything) {
     SnapshotStore store;
     CHECK(store.apply(fullSnapshot(10)));

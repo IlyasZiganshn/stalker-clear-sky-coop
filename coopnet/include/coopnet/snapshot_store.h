@@ -1,18 +1,24 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <map>
 
 #include "coopnet/snapshot.h"
 
 namespace coopnet {
 
-// Client-side world state: keeps the last applied snapshot and merges deltas
-// into it. A full snapshot (base_tick = 0) replaces the world; a delta must
-// name the tick currently held, otherwise it is rejected and the caller should
-// request a full snapshot.
+// Client-side world state. A full snapshot (base_tick = 0) replaces the world;
+// a delta is applied to the newest retained state matching its base_tick. The
+// last states are kept so a delta built from a slightly older acknowledged tick
+// still applies after a lost snapshot, without a full resync. A delta whose
+// base is no longer retained is rejected and the caller should ask for a full
+// snapshot.
 class SnapshotStore {
 public:
+    static constexpr std::size_t kHistory = 16;
+
     bool apply(const Snapshot& snapshot);
     void clear();
 
@@ -26,9 +32,15 @@ public:
     }
 
 private:
+    using World = std::map<std::uint32_t, EntityState>;
+
+    const World* findBase(std::uint32_t tick) const;
+    void remember(std::uint32_t tick, const World& world);
+
     std::uint32_t tick_ = 0;
     std::uint32_t lastProcessedInput_ = 0;
-    std::map<std::uint32_t, EntityState> entities_;
+    World entities_;
+    std::deque<std::pair<std::uint32_t, World>> history_;
 };
 
-}  // namespace coopnet
+} // namespace coopnet

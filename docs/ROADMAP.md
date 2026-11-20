@@ -47,6 +47,10 @@ Interest management (радиус 150 м, keep-radius 165 м) и `ClientReplicat
 Движущиеся актёры ходят по UDP: `coopnet_move two` — два клиента, серверный
 `PlayerActor` из `C_INPUT`, `last_processed_input` в снапшоте, предсказание
 своего актёра; у обоих клиентов коррекции не больше 5 мм, чужие актёры видны.
+Дельта-снапшоты строятся от подтверждённой клиентом базы, клиент держит 16
+последних состояний: потеря пакета больше не рвёт цепочку. Под `net_sim`
+(80 мс RTT, 2% потерь; 160 мс RTT, 5% потерь) — 0 отклонённых дельт, сценарий
+закреплён в `ctest` как `coopnet_snap_relay`.
 Форк OpenXRay получен (`engine/fetch.ps1`), патчится (`engine/apply.ps1`) и
 собирается (`engine/build.ps1`): `xrEngine.exe` Release x64. `coopnet` компилируется
 внутрь `xrNetServer.dll`, мост `coop::Bridge*` тикает из `CRenderDevice::FrameMove`,

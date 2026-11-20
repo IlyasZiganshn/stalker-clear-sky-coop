@@ -163,20 +163,23 @@ int serve(coopnet::UdpSocket& socket, std::atomic<bool>* stop = nullptr,
                 it = clients.try_emplace(delivered.from, interest).first;
                 it->second.actorNetId = actorNetId;
             }
-            it->second.ackedTick = input.ackSnapshot;
+            auto& client = it->second;
+            if (input.ackSnapshot > client.ackedTick) {
+                client.ackedTick = input.ackSnapshot;
+            }
         }
 
         if (now >= nextSnapshotMs && now <= kServerIdleTimeoutMs) {
             nextSnapshotMs = now + kSnapshotIntervalMs;
             const coopnet::Snapshot world = makeWorld(++tick);
             for (auto& [endpoint, client] : clients) {
-                // Deltas chain from the previous snapshot sent to this client.
-                // If the client's acks fall too far behind (lost packet broke
-                // the chain), or it never sent one, start over with a full one.
+                // The delta is built from the snapshot the client acknowledged, so a
+                // lost packet costs one delta instead of a second of full
+                // resyncs; the client keeps recent states as delta bases.
                 const bool lagging =
                     client.ackedTick == 0 ||
                     tick - client.ackedTick > kMaxAckLagTicks;
-                const std::uint32_t base = lagging ? 0 : client.sentTick;
+                const std::uint32_t base = lagging ? 0 : client.ackedTick;
 
                 coopnet::Vec3 viewer{};
                 for (const auto& entity : world.entities) {

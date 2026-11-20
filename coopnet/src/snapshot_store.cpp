@@ -1,11 +1,14 @@
 #include "coopnet/snapshot_store.h"
 
+#include <utility>
+
 namespace coopnet {
 
 void SnapshotStore::clear() {
     tick_ = 0;
     lastProcessedInput_ = 0;
     entities_.clear();
+    history_.clear();
 }
 
 const EntityState* SnapshotStore::find(std::uint32_t netId) const {
@@ -13,27 +16,53 @@ const EntityState* SnapshotStore::find(std::uint32_t netId) const {
     return it == entities_.end() ? nullptr : &it->second;
 }
 
+const SnapshotStore::World* SnapshotStore::findBase(std::uint32_t tick) const {
+    for (auto it = history_.rbegin(); it != history_.rend(); ++it) {
+        if (it->first == tick) {
+            return &it->second;
+        }
+    }
+    return nullptr;
+}
+
+void SnapshotStore::remember(std::uint32_t tick, const World& world) {
+    history_.emplace_back(tick, world);
+    while (history_.size() > kHistory) {
+        history_.pop_front();
+    }
+}
+
 bool SnapshotStore::apply(const Snapshot& snapshot) {
     if (snapshot.baseTick == 0) {
-        entities_.clear();
-        for (const auto& entity : snapshot.entities) {
-            entities_[entity.netId] = entity;
+        if (snapshot.tick < tick_) {
+            return true;  // stale full snapshot: keep the newer world
         }
+        World world;
+        for (const auto& entity : snapshot.entities) {
+            world[entity.netId] = entity;
+        }
+        entities_ = std::move(world);
         tick_ = snapshot.tick;
         lastProcessedInput_ = snapshot.lastProcessedInput;
+        remember(tick_, entities_);
         return true;
     }
 
-    if (snapshot.baseTick != tick_) {
+    const World* base = findBase(snapshot.baseTick);
+    if (base == nullptr) {
         return false;
     }
+    if (snapshot.tick <= tick_) {
+        return true;  // already at this tick or newer
+    }
 
+    World world = *base;
     for (const auto& delta : snapshot.entities) {
-        auto it = entities_.find(delta.netId);
-        if (it == entities_.end()) {
+        auto it = world.find(delta.netId);
+        if (it == world.end()) {
             // A delta may introduce an entity it just spawned; fields missing
             // from the mask keep their defaults.
-            entities_.emplace(delta.netId, delta);
+            world.emplace(delta.netId, delta);
             continue;
         }
 
@@ -73,11 +102,14 @@ bool SnapshotStore::apply(const Snapshot& snapshot) {
     }
 
     for (const auto netId : snapshot.removed) {
-        entities_.erase(netId);
+        world.erase(netId);
     }
+
+    entities_ = std::move(world);
     tick_ = snapshot.tick;
     lastProcessedInput_ = snapshot.lastProcessedInput;
+    remember(tick_, entities_);
     return true;
 }
 
-}  // namespace coopnet
+} // namespace coopnet

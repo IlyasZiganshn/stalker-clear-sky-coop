@@ -44,6 +44,9 @@ Interest management (радиус 150 м, keep-radius 165 м) и `ClientReplicat
 Предсказание движения с реконсиляцией проверено в `coopnet_move`: общий для
 сервера и клиента детерминированный шаг, лаг 4 тика, потеря снапшотов и
 непредсказуемый импульс — клиент исправляется, финальное расхождение нулевое.
+Движущиеся актёры ходят по UDP: `coopnet_move two` — два клиента, серверный
+`PlayerActor` из `C_INPUT`, `last_processed_input` в снапшоте, предсказание
+своего актёра; у обоих клиентов коррекции не больше 5 мм, чужие актёры видны.
 Форк OpenXRay получен (`engine/fetch.ps1`), патчится (`engine/apply.ps1`) и
 собирается (`engine/build.ps1`): `xrEngine.exe` Release x64. `coopnet` компилируется
 внутрь `xrNetServer.dll`, мост `coop::Bridge*` тикает из `CRenderDevice::FrameMove`,

@@ -47,6 +47,9 @@ public:
     std::size_t broadcast(Channel channel, const std::vector<std::uint8_t>& payload);
 
     bool isJoined(const Endpoint& endpoint) const;
+    // Player identity assigned during the handshake; 0 when the peer is
+    // unknown or has not joined yet.
+    std::uint32_t netIdOf(const Endpoint& endpoint) const;
     std::size_t peerCount() const { return peers_.size(); }
     std::size_t joinedCount() const;
     std::size_t droppedDatagrams() const { return droppedDatagrams_; }

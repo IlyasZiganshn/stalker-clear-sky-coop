@@ -75,6 +75,7 @@ Snapshot SnapshotDelta::makeDelta(const Snapshot& base,
     Snapshot delta;
     delta.tick = current.tick;
     delta.baseTick = base.tick;
+    delta.lastProcessedInput = current.lastProcessedInput;
 
     std::map<std::uint32_t, const EntityState*> previous;
     for (const auto& entity : base.entities) {

@@ -17,6 +17,7 @@ public:
     void clear();
 
     std::uint32_t tick() const { return tick_; }
+    std::uint32_t lastProcessedInput() const { return lastProcessedInput_; }
     bool empty() const { return entities_.empty(); }
     std::size_t size() const { return entities_.size(); }
     const EntityState* find(std::uint32_t netId) const;
@@ -26,6 +27,7 @@ public:
 
 private:
     std::uint32_t tick_ = 0;
+    std::uint32_t lastProcessedInput_ = 0;
     std::map<std::uint32_t, EntityState> entities_;
 };
 

@@ -77,6 +77,14 @@ bool NetServer::isJoined(const Endpoint& endpoint) const {
     return it != peers_.end() && it->second.state() == PeerState::Joined;
 }
 
+std::uint32_t NetServer::netIdOf(const Endpoint& endpoint) const {
+    const auto it = peers_.find(endpoint);
+    if (it == peers_.end() || it->second.state() != PeerState::Joined) {
+        return 0;
+    }
+    return it->second.netId();
+}
+
 std::size_t NetServer::joinedCount() const {
     std::size_t count = 0;
     for (const auto& [endpoint, peer] : peers_) {

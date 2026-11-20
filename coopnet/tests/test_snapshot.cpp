@@ -43,6 +43,7 @@ COOP_TEST(snapshot_roundtrips_entities_and_removals) {
     Snapshot original;
     original.tick = 1234;
     original.baseTick = 1200;
+    original.lastProcessedInput = 740;
     original.entities.push_back(player(7, 10.5f, -20.25f, 3.0f));
     original.entities.push_back(player(9, -100.0f, 80.0f, 12.0f));
     original.removed = {5, 6};
@@ -57,6 +58,7 @@ COOP_TEST(snapshot_roundtrips_entities_and_removals) {
 
     CHECK_EQ(decoded.tick, original.tick);
     CHECK_EQ(decoded.baseTick, original.baseTick);
+    CHECK_EQ(decoded.lastProcessedInput, original.lastProcessedInput);
     CHECK_EQ(decoded.entities.size(), std::size_t{2});
     CHECK(decoded.removed == original.removed);
 
@@ -123,6 +125,7 @@ COOP_TEST(snapshot_rejects_unknown_presence_bits) {
     BitWriter writer;
     writer.writeU32(1);
     writer.writeU32(0);
+    writer.writeU32(0);
     writer.writeU16(1);
     writer.writeU32(1);
     writer.writeU8(0);
@@ -154,6 +157,7 @@ COOP_TEST(snapshot_rejects_absurd_counts) {
     BitWriter entitiesWriter;
     entitiesWriter.writeU32(1);
     entitiesWriter.writeU32(0);
+    entitiesWriter.writeU32(0);
     entitiesWriter.writeU16(
         static_cast<std::uint16_t>(SnapshotCodec::kMaxEntities + 1));
     BitReader entitiesReader(entitiesWriter.data().data(),
@@ -163,6 +167,7 @@ COOP_TEST(snapshot_rejects_absurd_counts) {
 
     BitWriter removedWriter;
     removedWriter.writeU32(1);
+    removedWriter.writeU32(0);
     removedWriter.writeU32(0);
     removedWriter.writeU16(0);
     removedWriter.writeU32(

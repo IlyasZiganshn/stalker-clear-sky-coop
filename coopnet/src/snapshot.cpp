@@ -12,6 +12,7 @@ bool SnapshotCodec::encode(const Snapshot& snapshot, BitWriter& writer) const {
     }
     writer.writeU32(snapshot.tick);
     writer.writeU32(snapshot.baseTick);
+    writer.writeU32(snapshot.lastProcessedInput);
     writer.writeU16(static_cast<std::uint16_t>(snapshot.entities.size()));
     for (const auto& entity : snapshot.entities) {
         encodeEntity(entity, writer);
@@ -27,6 +28,7 @@ bool SnapshotCodec::decode(BitReader& reader, Snapshot& out) const {
     Snapshot snapshot;
     snapshot.tick = reader.readU32();
     snapshot.baseTick = reader.readU32();
+    snapshot.lastProcessedInput = reader.readU32();
     const std::uint16_t entityCount = reader.readU16();
     if (!reader.ok() || entityCount > kMaxEntities) {
         return false;

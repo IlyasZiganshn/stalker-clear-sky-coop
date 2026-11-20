@@ -4,6 +4,7 @@ namespace coopnet {
 
 void SnapshotStore::clear() {
     tick_ = 0;
+    lastProcessedInput_ = 0;
     entities_.clear();
 }
 
@@ -19,6 +20,7 @@ bool SnapshotStore::apply(const Snapshot& snapshot) {
             entities_[entity.netId] = entity;
         }
         tick_ = snapshot.tick;
+        lastProcessedInput_ = snapshot.lastProcessedInput;
         return true;
     }
 
@@ -74,6 +76,7 @@ bool SnapshotStore::apply(const Snapshot& snapshot) {
         entities_.erase(netId);
     }
     tick_ = snapshot.tick;
+    lastProcessedInput_ = snapshot.lastProcessedInput;
     return true;
 }
 

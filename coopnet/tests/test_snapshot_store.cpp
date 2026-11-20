@@ -117,6 +117,24 @@ COOP_TEST(store_applies_removals_and_spawns) {
     CHECK(store.find(3) != nullptr);
 }
 
+COOP_TEST(store_keeps_last_processed_input) {
+    SnapshotStore store;
+    Snapshot full = fullSnapshot(10);
+    full.lastProcessedInput = 123;
+    CHECK(store.apply(full));
+    CHECK_EQ(store.lastProcessedInput(), std::uint32_t{123});
+
+    Snapshot delta;
+    delta.tick = 11;
+    delta.baseTick = 10;
+    delta.lastProcessedInput = 130;
+    CHECK(store.apply(delta));
+    CHECK_EQ(store.lastProcessedInput(), std::uint32_t{130});
+
+    store.clear();
+    CHECK_EQ(store.lastProcessedInput(), std::uint32_t{0});
+}
+
 COOP_TEST(store_clear_resets_everything) {
     SnapshotStore store;
     CHECK(store.apply(fullSnapshot(10)));

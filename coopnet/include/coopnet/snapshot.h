@@ -45,6 +45,7 @@ struct EntityState {
 struct Snapshot {
     std::uint32_t tick = 0;
     std::uint32_t baseTick = 0;  // 0 = full snapshot
+    std::uint32_t lastProcessedInput = 0;  // per-client ack for reconciliation
     std::vector<EntityState> entities;
     std::vector<std::uint32_t> removed;
 };

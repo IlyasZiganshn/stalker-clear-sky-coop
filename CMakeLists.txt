@@ -39,4 +39,7 @@ target_link_libraries(coopnet_move PRIVATE coopnet Threads::Threads)
 add_test(NAME coopnet_move COMMAND coopnet_move local 600)
 set_tests_properties(coopnet_move PROPERTIES TIMEOUT 60)
 
+add_test(NAME coopnet_move_two COMMAND coopnet_move two 3000)
+set_tests_properties(coopnet_move_two PROPERTIES TIMEOUT 60)
+
 message(STATUS "clear_sky_coop: coopnet configured (engine build is separate)")

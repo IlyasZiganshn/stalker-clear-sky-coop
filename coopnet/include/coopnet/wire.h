@@ -9,7 +9,7 @@
 namespace coopnet {
 
 // Bumped on any incompatible change to headers, snapshot layout or RPC table.
-constexpr std::uint16_t kProtocolVersion = 1;
+constexpr std::uint16_t kProtocolVersion = 2;
 
 // One UDP socket, four logical channels. See docs/PROTOCOL.md.
 enum class Channel : std::uint8_t {

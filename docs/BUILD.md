@@ -70,7 +70,7 @@ CMake и Ninja ставятся вместе с C++-нагрузкой Visual St
 
 ```
 coop_listen 27016            # хост: обычная одиночная игра слушает UDP
-coop_connect 192.168.1.5:27016
+coop_connect 192.168.1.5:27016 Stalker   # имя необязательно
 coop_say текст
 coop_status                      # пиры, RTT, чужие позиции и биты движения
 coop_dump                        # ID, секция и позиция объектов уровня

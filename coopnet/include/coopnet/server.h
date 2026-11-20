@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <string>
 #include <vector>
 
 #include "coopnet/net.h"
@@ -62,6 +63,9 @@ public:
     // Player identity assigned during the handshake; 0 when the peer is
     // unknown or has not joined yet.
     std::uint32_t netIdOf(const Endpoint& endpoint) const;
+    // Name the peer sent in C_HELLO; empty when the peer is unknown or has
+    // not joined yet.
+    std::string nameOfNetId(std::uint32_t netId) const;
     std::size_t peerCount() const { return peers_.size(); }
     std::size_t joinedCount() const;
     std::size_t droppedDatagrams() const { return droppedDatagrams_; }

@@ -3,7 +3,9 @@
 #include "coop/coop_bridge.h"
 
 #include <cstdio>
+#include <cstring>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "coopnet/app_message.h"
@@ -43,6 +45,7 @@ struct Bridge
     u16 port = 0;
     char status[192] = "coop: off";
     char lastChat[256] = "";
+    char playerName[coopnet::kMaxNameBytes + 1] = "player";
     coopnet::PlayerState local;
     u32 localPublishMs = 0;
     u32 nowMs = 0;
@@ -111,7 +114,17 @@ void rememberChat(const coopnet::AppMessage& message)
 {
     Bridge& b = state();
     if (message.sender == 0)
+    {
         std::snprintf(b.lastChat, sizeof(b.lastChat), "host: %s", message.text.c_str());
+        return;
+    }
+
+    // The host knows the names from the handshake; a client only has net_ids.
+    std::string name;
+    if (b.server)
+        name = b.server->nameOfNetId(message.sender);
+    if (!name.empty())
+        std::snprintf(b.lastChat, sizeof(b.lastChat), "%s: %s", name.c_str(), message.text.c_str());
     else
         std::snprintf(b.lastChat, sizeof(b.lastChat), "player %u: %s",
             unsigned(message.sender), message.text.c_str());
@@ -378,6 +391,22 @@ void BridgeStop()
     std::snprintf(b.status, sizeof(b.status), "coop: off");
 }
 
+void BridgeSetPlayerName(pcstr name)
+{
+    Bridge& b = state();
+    if (name == nullptr || name[0] == 0)
+    {
+        xr_strcpy(b.playerName, "player");
+        return;
+    }
+
+    std::size_t length = xr_strlen(name);
+    if (length > coopnet::kMaxNameBytes)
+        length = coopnet::kMaxNameBytes;
+    std::memcpy(b.playerName, name, length);
+    b.playerName[length] = 0;
+}
+
 bool BridgeStartServer(u16 port)
 {
     BridgeStop();
@@ -437,7 +466,7 @@ bool BridgeStartClient(pcstr host, u16 port)
     }
 
     b.client = std::make_unique<coopnet::ClientPeer>(makePeerConfig());
-    if (!b.client->start("player"))
+    if (!b.client->start(b.playerName))
     {
         BridgeStop();
         std::snprintf(b.status, sizeof(b.status), "coop: cannot start handshake");
@@ -877,6 +906,22 @@ u32 BridgePeerCount()
     if (b.client && b.client->state() == coopnet::PeerState::Joined)
         return 1;
     return 0;
+}
+
+bool BridgePeerName(u32 netId, char* out, u32 capacity)
+{
+    Bridge& b = state();
+    if (out == nullptr || capacity == 0)
+        return false;
+    out[0] = 0;
+    if (b.server == nullptr)
+        return false;
+
+    const std::string name = b.server->nameOfNetId(netId);
+    if (name.empty())
+        return false;
+    std::snprintf(out, capacity, "%s", name.c_str());
+    return true;
 }
 
 pcstr BridgeStatus()

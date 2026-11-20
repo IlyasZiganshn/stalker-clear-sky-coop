@@ -51,36 +51,44 @@ public:
 
     void Execute(pcstr args) override
     {
-        string256 host{};
-        u16 port = kCoopDefaultPort;
+        // "host[:port] [name]": everything after the first word is the name.
+        string256 address{};
+        const char* separator = strpbrk(args, " \t");
+        const std::size_t length =
+            separator ? static_cast<std::size_t>(separator - args) : xr_strlen(args);
+        if (length == 0 || length >= sizeof(address))
+        {
+            InvalidSyntax();
+            return;
+        }
+        memcpy(address, args, length);
+        address[length] = 0;
 
-        const char* colon = strrchr(args, ':');
+        pcstr name = separator;
+        while (name && (*name == ' ' || *name == '\t'))
+            ++name;
+        if (name && !name[0])
+            name = nullptr;
+
+        u16 port = kCoopDefaultPort;
+        const char* colon = strrchr(address, ':');
         if (colon)
         {
-            const std::size_t length = static_cast<std::size_t>(colon - args);
-            if (length == 0 || length >= sizeof(host) || !parsePort(colon + 1, port))
+            const std::size_t hostLength = static_cast<std::size_t>(colon - address);
+            if (hostLength == 0 || !parsePort(colon + 1, port))
             {
                 InvalidSyntax();
                 return;
             }
-            memcpy(host, args, length);
-            host[length] = 0;
-        }
-        else
-        {
-            if (!args[0] || xr_strlen(args) >= sizeof(host))
-            {
-                InvalidSyntax();
-                return;
-            }
-            xr_strcpy(host, args);
+            address[hostLength] = 0;
         }
 
-        coop::BridgeStartClient(host, port);
+        coop::BridgeSetPlayerName(name);
+        coop::BridgeStartClient(address, port);
         Msg("* %s", coop::BridgeStatus());
     }
 
-    void Info(TInfo& I) override { xr_strcpy(I, "host[:port], port default 27016"); }
+    void Info(TInfo& I) override { xr_strcpy(I, "host[:port] [name], port default 27016"); }
 };
 
 class CCC_CoopStop : public IConsole_Command
@@ -113,8 +121,11 @@ public:
             coop::BridgeLocalSpawnSize(), coop::BridgeKnownSpawnCount(), count);
         for (u32 i = 0; i < count; ++i)
         {
-            Msg("* coop: remote %u at %.1f %.1f %.1f, yaw %.2f, body 0x%04x",
-                remotes[i].netId, remotes[i].x, remotes[i].y, remotes[i].z,
+            char name[64] = "";
+            coop::BridgePeerName(remotes[i].netId, name, sizeof(name));
+            Msg("* coop: remote %u%s%s at %.1f %.1f %.1f, yaw %.2f, body 0x%04x",
+                remotes[i].netId, name[0] ? " " : "", name,
+                remotes[i].x, remotes[i].y, remotes[i].z,
                 remotes[i].yaw, remotes[i].bodyState);
         }
 

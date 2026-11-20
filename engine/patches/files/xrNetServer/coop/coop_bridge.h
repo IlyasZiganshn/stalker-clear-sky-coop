@@ -10,11 +10,17 @@ namespace coop
 {
 XRNETSERVER_API bool BridgeStartServer(u16 port);
 XRNETSERVER_API bool BridgeStartClient(pcstr host, u16 port);
+// Name announced to the host during the handshake; empty names fall back to
+// "player". Call it before BridgeStartClient.
+XRNETSERVER_API void BridgeSetPlayerName(pcstr name);
 XRNETSERVER_API void BridgeStop();
 XRNETSERVER_API void BridgeTick(u32 nowMs);
 
 XRNETSERVER_API bool BridgeActive();
 XRNETSERVER_API u32 BridgePeerCount();
+// Copies the handshake name of a joined remote player into out; false when the
+// peer is unknown or this process is the client (it has no name table).
+XRNETSERVER_API bool BridgePeerName(u32 netId, char* out, u32 capacity);
 
 // Sends a chat line: a client sends it to the server, the server broadcasts it
 // to every joined peer. False when there is no session or the text is too long.

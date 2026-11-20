@@ -151,6 +151,23 @@ COOP_TEST(server_ignores_unknown_peers) {
     CHECK_EQ(server.broadcast(Channel::Events, bytesOf("hello")), std::size_t{0});
 }
 
+COOP_TEST(server_reports_peer_names) {
+    NetServer server(serverOptions());
+    ClientPeer first(clientOptions());
+    ClientPeer second(clientOptions());
+    const Endpoint firstAt = endpointOf(8201);
+    const Endpoint secondAt = endpointOf(8202);
+
+    CHECK(first.start("Stalker One"));
+    CHECK(second.start("Stalker Two"));
+    pump(server, {{firstAt, &first}, {secondAt, &second}}, 0);
+
+    CHECK(server.nameOfNetId(first.netId()) == "Stalker One");
+    CHECK(server.nameOfNetId(second.netId()) == "Stalker Two");
+    CHECK(server.nameOfNetId(0).empty());
+    CHECK(server.nameOfNetId(0xDEADu).empty());
+}
+
 COOP_TEST(server_expires_silent_peers) {
     NetServer server(serverOptions());
     ClientPeer client(clientOptions());

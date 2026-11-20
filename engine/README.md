@@ -67,7 +67,7 @@
   Через него уже ходят прикладные сообщения (`C_CHAT`): сервер пересылает строку
   всем, кроме автора, последняя строка доступна как `BridgeLastChat()`.
 - `engine/patches/files/xrEngine/coop/coop_cmds.cpp` — команды `coop_listen [port]`,
-  `coop_connect host[:port]`, `coop_say <text>`, `coop_stop`, `coop_status`.
+  `coop_connect host[:port] [name]`, `coop_say <text>`, `coop_stop`, `coop_status`.
 - `engine/patches/0001-coopnet-in-engine.patch` — `xrNetServer.vcxproj` компилирует
   `coopnet/src/*.cpp` (include `coopnet/include`), `xrEngine.vcxproj` — команды,
   `CCC_Register` их регистрирует, `FrameMove` тикает мост.

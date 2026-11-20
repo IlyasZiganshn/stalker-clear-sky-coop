@@ -99,6 +99,18 @@ std::uint32_t NetServer::netIdOf(const Endpoint& endpoint) const {
     return it->second.netId();
 }
 
+std::string NetServer::nameOfNetId(std::uint32_t netId) const {
+    if (netId == 0) {
+        return {};
+    }
+    for (const auto& [endpoint, peer] : peers_) {
+        if (peer.state() == PeerState::Joined && peer.netId() == netId) {
+            return peer.playerName();
+        }
+    }
+    return {};
+}
+
 std::size_t NetServer::joinedCount() const {
     std::size_t count = 0;
     for (const auto& [endpoint, peer] : peers_) {

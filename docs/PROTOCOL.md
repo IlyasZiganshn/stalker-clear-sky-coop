@@ -386,8 +386,9 @@ C_SPAWN_GONE {
 - При выходе игрока сервер шлёт `C_SPAWN_GONE` (вместе с `C_PLAYER_GONE`):
   получатель удаляет куклу, не дожидаясь таймаута трансформа.
 
-Реализация: `coopnet/spawn.h`, демо `tools/coopnet_spawn`, мост
-`BridgeSetLocalSpawn`/`BridgeTakeSpawns`/`BridgeTakeDespawns`, движковая часть —
+Реализация: `coopnet/spawn.h`, `coopnet/spawn_registry.h`, демо
+`tools/coopnet_spawn`, мост `BridgeSetLocalSpawn`/`BridgeTakeSpawns`/
+`BridgeTakeDespawns`, движковая часть —
 `engine/patches/files/xrGame/coop/coop_player.cpp`.
 
 ## События

@@ -102,6 +102,11 @@ XRNETSERVER_API u32 BridgeTakeSpawns(SpawnInfo* out, u32 capacity);
 // Copies net_ids of players that left; the game side destroys its copies.
 XRNETSERVER_API u32 BridgeTakeDespawns(u32* out, u32 capacity);
 
+// Diagnostics: bytes of the local spawn blob and number of peer spawns the
+// bridge knows (late joiners get all of them).
+XRNETSERVER_API u32 BridgeLocalSpawnSize();
+XRNETSERVER_API u32 BridgeKnownSpawnCount();
+
 // Tells the bridge which level and game clock the local process is on. Call it
 // every frame; outgoing world info is throttled. A client whose level differs
 // from the server's is disconnected with a message in BridgeStatus().

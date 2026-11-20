@@ -14,6 +14,7 @@
 #include "coopnet/player_state.h"
 #include "coopnet/server.h"
 #include "coopnet/spawn.h"
+#include "coopnet/spawn_registry.h"
 #include "coopnet/world_info.h"
 
 namespace
@@ -62,7 +63,7 @@ struct Bridge
     std::vector<std::uint8_t> localSpawn;
     bool localSpawnSent = false;
     u32 spawnResendMs = 0;
-    std::vector<coopnet::Spawn> knownSpawns;
+    coopnet::SpawnRegistry knownSpawns;
     std::vector<coopnet::Spawn> pendingSpawns;
     std::vector<u32> pendingDespawns;
 };
@@ -186,22 +187,7 @@ bool hasRemoteInput(const Bridge& b, u32 netId, u32 nowMs)
 
 void removeKnownSpawn(Bridge& b, u32 netId)
 {
-    for (auto it = b.knownSpawns.begin(); it != b.knownSpawns.end(); ++it)
-    {
-        if (it->netId == netId)
-        {
-            b.knownSpawns.erase(it);
-            return;
-        }
-    }
-}
-
-const coopnet::Spawn* findKnownSpawn(const Bridge& b, u32 netId)
-{
-    for (const auto& spawn : b.knownSpawns)
-        if (spawn.netId == netId)
-            return &spawn;
-    return nullptr;
+    b.knownSpawns.remove(netId);
 }
 
 // Game side has not seen this spawn yet: keep one copy per player.
@@ -318,10 +304,7 @@ void handleAppMessage(Bridge& b, const coopnet::Session::Delivery& delivery,
 
         // A peer that reloaded the level publishes a fresh blob under the same
         // net_id: the old doll belongs to the previous world and must go.
-        const coopnet::Spawn* previous = findKnownSpawn(b, spawn.netId);
-        const bool changed = previous != nullptr && previous->data != spawn.data;
-        removeKnownSpawn(b, spawn.netId);
-        b.knownSpawns.push_back(spawn);
+        const coopnet::SpawnRegistry::Change change = b.knownSpawns.observe(spawn);
 
         if (b.server && from != nullptr)
         {
@@ -330,7 +313,7 @@ void handleAppMessage(Bridge& b, const coopnet::Session::Delivery& delivery,
                 b.server->broadcastExcept(*from, coopnet::Channel::Control, wire);
         }
 
-        if (changed)
+        if (change == coopnet::SpawnRegistry::Change::Replaced)
             queueDespawn(b, spawn.netId);
         queueSpawn(b, spawn);
         return;
@@ -520,7 +503,7 @@ void BridgeTick(u32 nowMs)
                 if (coopnet::encodeSpawn(hostSpawn, wire))
                     b.server->send(event.endpoint, coopnet::Channel::Control, wire);
             }
-            for (const auto& known : b.knownSpawns)
+            for (const auto& known : b.knownSpawns.all())
             {
                 if (coopnet::encodeSpawn(known, wire))
                     b.server->send(event.endpoint, coopnet::Channel::Control, wire);
@@ -852,6 +835,16 @@ u32 BridgeTakeDespawns(u32* out, u32 capacity)
         b.pendingDespawns.erase(b.pendingDespawns.begin());
     }
     return written;
+}
+
+u32 BridgeLocalSpawnSize()
+{
+    return static_cast<u32>(state().localSpawn.size());
+}
+
+u32 BridgeKnownSpawnCount()
+{
+    return static_cast<u32>(state().knownSpawns.size());
 }
 
 void BridgeSetWorldInfo(pcstr levelName, u64 gameTimeMs)

@@ -48,6 +48,14 @@ tools/          логгер трафика, инспектор снапшото
 ./scripts/build.ps1 -Test
 ```
 
+Движок и игра:
+
+```powershell
+./engine/apply.ps1                         # патчи и coopnet в engine/src
+./engine/build.ps1                         # Release x64
+./scripts/deploy.ps1 -GameDir <каталог>    # бинарники в копию игры
+```
+
 Подробнее: [docs/BUILD.md](docs/BUILD.md). `coopnet` собирается и тестируется без движка
 и без установленной игры — это единственная часть, которую можно проверить прямо сейчас.
 

@@ -29,6 +29,7 @@ add_library(coopnet STATIC
     src/player_interp.cpp
     src/world_info.cpp
     src/spawn.cpp
+    src/spawn_registry.cpp
 )
 target_include_directories(coopnet PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 if(WIN32)
@@ -66,6 +67,7 @@ add_executable(coopnet_tests
     tests/test_player_interp.cpp
     tests/test_world_info.cpp
     tests/test_spawn.cpp
+    tests/test_spawn_registry.cpp
 )
 target_link_libraries(coopnet_tests PRIVATE coopnet Threads::Threads)
 target_include_directories(coopnet_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)

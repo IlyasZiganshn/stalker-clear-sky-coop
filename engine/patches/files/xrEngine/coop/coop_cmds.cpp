@@ -109,6 +109,8 @@ public:
 
         coop::RemotePlayer remotes[4];
         const u32 count = coop::BridgeRemotePlayers(remotes, 4);
+        Msg("* coop: local spawn %u bytes, known spawns %u, remote players %u",
+            coop::BridgeLocalSpawnSize(), coop::BridgeKnownSpawnCount(), count);
         for (u32 i = 0; i < count; ++i)
         {
             Msg("* coop: remote %u at %.1f %.1f %.1f, yaw %.2f, body 0x%04x",

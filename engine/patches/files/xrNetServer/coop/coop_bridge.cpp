@@ -11,12 +11,14 @@
 #include "coopnet/peer.h"
 #include "coopnet/player_state.h"
 #include "coopnet/server.h"
+#include "coopnet/world_info.h"
 
 namespace
 {
 constexpr u32 kBuildHash = 0x43534B59; // "CSKY"
 constexpr u32 kHostNetId = 1;
 constexpr u32 kPublishIntervalMs = 50;
+constexpr u32 kWorldBroadcastMs = 1000;
 constexpr u32 kRemoteTimeoutMs = 2000;
 constexpr u32 kMaxRemotes = 8;
 
@@ -35,6 +37,15 @@ struct Bridge
     u32 nowMs = 0;
     coopnet::PlayerState remotes[kMaxRemotes];
     u32 remoteMs[kMaxRemotes] = {};
+    coopnet::WorldInfo localWorld;
+    bool hasLocalWorld = false;
+    u32 worldBroadcastMs = 0;
+    bool worldSent = false;
+    coopnet::WorldInfo serverWorld;
+    bool serverWorldKnown = false;
+    u64 serverClockOffsetMs = 0;
+    bool levelMismatch = false;
+    char levelMismatchText[128] = "";
 };
 
 Bridge& state()
@@ -117,6 +128,17 @@ void handleAppMessage(Bridge& b, const coopnet::Session::Delivery& delivery,
         return;
     }
 
+    coopnet::WorldInfo world;
+    if (coopnet::decodeWorldInfo(delivery.payload.data(), delivery.payload.size(), world))
+    {
+        b.serverWorld = world;
+        b.serverWorldKnown = true;
+        b.serverClockOffsetMs = world.gameTimeMs - nowMs;
+        if (b.hasLocalWorld && b.localWorld.levelName != world.levelName)
+            b.levelMismatch = true;
+        return;
+    }
+
     coopnet::PlayerState playerState;
     if (coopnet::decodePlayerState(delivery.payload.data(), delivery.payload.size(), playerState))
     {
@@ -174,6 +196,15 @@ void BridgeStop()
     b.lastChat[0] = 0;
     b.local = coopnet::PlayerState{};
     b.localPublishMs = 0;
+    b.localWorld = coopnet::WorldInfo{};
+    b.hasLocalWorld = false;
+    b.worldBroadcastMs = 0;
+    b.worldSent = false;
+    b.serverWorld = coopnet::WorldInfo{};
+    b.serverWorldKnown = false;
+    b.serverClockOffsetMs = 0;
+    b.levelMismatch = false;
+    b.levelMismatchText[0] = 0;
     for (u32 i = 0; i < kMaxRemotes; ++i)
     {
         b.remotes[i] = coopnet::PlayerState{};
@@ -281,17 +312,48 @@ void BridgeTick(u32 nowMs)
             handleAppMessage(b, delivery.delivery, &delivery.from, nowMs);
         for (const auto& event : b.server->takeEvents())
         {
-            if (event.type != coopnet::NetServer::ServerEvent::Type::Left)
+            if (event.type == coopnet::NetServer::ServerEvent::Type::Left)
+            {
+                forgetRemote(b, event.netId);
+                std::vector<std::uint8_t> wire;
+                if (coopnet::encodePlayerGone(event.netId, wire))
+                    b.server->broadcast(coopnet::Channel::Control, wire);
                 continue;
-            forgetRemote(b, event.netId);
+            }
+            // A fresh peer gets the level and clock right away.
             std::vector<std::uint8_t> wire;
-            if (coopnet::encodePlayerGone(event.netId, wire))
-                b.server->broadcast(coopnet::Channel::Control, wire);
+            if (b.hasLocalWorld && coopnet::encodeWorldInfo(b.localWorld, wire))
+                b.server->send(event.endpoint, coopnet::Channel::Control, wire);
         }
-        std::snprintf(b.status, sizeof(b.status), "coop: hosting on port %u, peers %llu, joined %llu",
-            unsigned(b.port),
-            static_cast<unsigned long long>(b.server->peerCount()),
-            static_cast<unsigned long long>(b.server->joinedCount()));
+
+        if (b.hasLocalWorld &&
+            (b.worldBroadcastMs == 0 || nowMs - b.worldBroadcastMs >= kWorldBroadcastMs))
+        {
+            std::vector<std::uint8_t> wire;
+            if (coopnet::encodeWorldInfo(b.localWorld, wire))
+            {
+                b.server->broadcast(coopnet::Channel::Control, wire);
+                b.worldBroadcastMs = nowMs;
+            }
+        }
+
+        if (b.hasLocalWorld)
+        {
+            std::snprintf(b.status, sizeof(b.status),
+                "coop: hosting on port %u, peers %llu, joined %llu, level %s",
+                unsigned(b.port),
+                static_cast<unsigned long long>(b.server->peerCount()),
+                static_cast<unsigned long long>(b.server->joinedCount()),
+                b.localWorld.levelName.c_str());
+        }
+        else
+        {
+            std::snprintf(b.status, sizeof(b.status),
+                "coop: hosting on port %u, peers %llu, joined %llu",
+                unsigned(b.port),
+                static_cast<unsigned long long>(b.server->peerCount()),
+                static_cast<unsigned long long>(b.server->joinedCount()));
+        }
         return;
     }
 
@@ -303,8 +365,36 @@ void BridgeTick(u32 nowMs)
             handleAppMessage(b, delivery, nullptr, nowMs);
 
         if (b.client->state() == coopnet::PeerState::Joined)
-            std::snprintf(b.status, sizeof(b.status), "coop: joined %s, rtt %u ms",
-                b.serverEndpoint.toString().c_str(), unsigned(b.client->session().rttMs()));
+        {
+            if (!b.worldSent && b.hasLocalWorld)
+            {
+                std::vector<std::uint8_t> wire;
+                if (coopnet::encodeWorldInfo(b.localWorld, wire) &&
+                    b.client->send(coopnet::Channel::Control, wire))
+                    b.worldSent = true;
+            }
+
+            if (b.levelMismatch)
+            {
+                std::snprintf(b.levelMismatchText, sizeof(b.levelMismatchText),
+                    "coop: level mismatch ('%s' local, '%s' server)",
+                    b.localWorld.levelName.c_str(),
+                    b.serverWorld.levelName.c_str());
+                BridgeStop();
+                std::snprintf(b.status, sizeof(b.status), "%s", b.levelMismatchText);
+                return;
+            }
+
+            if (b.serverWorldKnown)
+                std::snprintf(b.status, sizeof(b.status),
+                    "coop: joined %s, rtt %u ms, level %s",
+                    b.serverEndpoint.toString().c_str(),
+                    unsigned(b.client->session().rttMs()),
+                    b.serverWorld.levelName.c_str());
+            else
+                std::snprintf(b.status, sizeof(b.status), "coop: joined %s, rtt %u ms",
+                    b.serverEndpoint.toString().c_str(), unsigned(b.client->session().rttMs()));
+        }
         else if (b.client->timedOut(nowMs))
             std::snprintf(b.status, sizeof(b.status), "coop: connection timed out");
         else
@@ -413,6 +503,25 @@ u32 BridgeRemotePlayers(RemotePlayer* out, u32 capacity)
         player.yaw = b.remotes[i].yaw;
     }
     return written;
+}
+
+void BridgeSetWorldInfo(pcstr levelName, u64 gameTimeMs)
+{
+    Bridge& b = state();
+    if (levelName == nullptr || levelName[0] == 0)
+        return;
+
+    b.localWorld.gameTimeMs = gameTimeMs;
+    b.localWorld.levelName = levelName;
+    b.hasLocalWorld = true;
+}
+
+u64 BridgeServerGameTime()
+{
+    Bridge& b = state();
+    if (!b.serverWorldKnown)
+        return 0;
+    return b.serverClockOffsetMs + b.nowMs;
 }
 
 u32 BridgePeerCount()

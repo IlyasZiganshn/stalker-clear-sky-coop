@@ -20,6 +20,7 @@
 #include "coopnet/peer.h"
 #include "coopnet/player_state.h"
 #include "coopnet/server.h"
+#include "coopnet/world_info.h"
 
 namespace {
 
@@ -28,7 +29,9 @@ constexpr std::uint16_t kDefaultPort = 27027;
 constexpr std::uint32_t kServerIdleTimeoutMs = 60000;
 constexpr std::uint32_t kLocalRunMs = 3000;
 constexpr std::uint32_t kSendIntervalMs = 100;
+constexpr std::uint32_t kWorldIntervalMs = 500;
 constexpr float kSpeed = 10.f; // m/s along +x for alpha, +z for bravo
+constexpr const char* kLevelName = "l01_escape";
 
 std::uint32_t elapsedMs(std::chrono::steady_clock::time_point started) {
     return static_cast<std::uint32_t>(
@@ -74,10 +77,13 @@ int serveWorld(coopnet::UdpSocket& socket, std::atomic<bool>* stop = nullptr) {
 
     const auto started = std::chrono::steady_clock::now();
     std::size_t relayed = 0;
+    std::size_t worldSent = 0;
+    std::uint32_t nextWorldMs = 0;
     for (;;) {
         const std::uint32_t now = elapsedMs(started);
         if (stop != nullptr && stop->load()) {
-            std::printf("world server: relayed %zu states\n", relayed);
+            std::printf("world server: relayed %zu states, %zu world updates\n",
+                        relayed, worldSent);
             return 0;
         }
         if (now > kServerIdleTimeoutMs) {
@@ -126,6 +132,18 @@ int serveWorld(coopnet::UdpSocket& socket, std::atomic<bool>* stop = nullptr) {
                           outgoing.data.size());
         }
 
+        if (now >= nextWorldMs) {
+            nextWorldMs = now + kWorldIntervalMs;
+            coopnet::WorldInfo info;
+            info.levelName = kLevelName;
+            info.gameTimeMs = 1000000ull + now;
+            std::vector<std::uint8_t> wire;
+            if (coopnet::encodeWorldInfo(info, wire) &&
+                server.broadcast(coopnet::Channel::Control, wire) > 0) {
+                ++worldSent;
+            }
+        }
+
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 }
@@ -139,6 +157,10 @@ struct WorldClientStats {
     std::uint32_t remoteNetId = 0;
     coopnet::PlayerState lastRemote;
     bool haveRemote = false;
+    bool worldSent = false;
+    bool worldKnown = false;
+    std::size_t levelMismatch = 0;
+    coopnet::WorldInfo serverWorld;
 };
 
 int runWorldClient(std::uint16_t port, const std::string& name,
@@ -188,6 +210,16 @@ int runWorldClient(std::uint16_t port, const std::string& name,
 
         if (peer.state() == coopnet::PeerState::Joined) {
             stats.netId = peer.netId();
+            if (!stats.worldSent) {
+                coopnet::WorldInfo local;
+                local.levelName = kLevelName;
+                local.gameTimeMs = 500000;
+                std::vector<std::uint8_t> worldWire;
+                if (coopnet::encodeWorldInfo(local, worldWire) &&
+                    peer.send(coopnet::Channel::Control, worldWire)) {
+                    stats.worldSent = true;
+                }
+            }
             if (now >= nextSendMs) {
                 nextSendMs = now + kSendIntervalMs;
                 const coopnet::PlayerState state =
@@ -202,6 +234,16 @@ int runWorldClient(std::uint16_t port, const std::string& name,
 
         for (const auto& delivery : peer.takeDelivered()) {
             if (delivery.channel != coopnet::Channel::Control) {
+                continue;
+            }
+            coopnet::WorldInfo world;
+            if (coopnet::decodeWorldInfo(delivery.payload.data(),
+                                         delivery.payload.size(), world)) {
+                stats.worldKnown = true;
+                stats.serverWorld = world;
+                if (world.levelName != kLevelName) {
+                    ++stats.levelMismatch;
+                }
                 continue;
             }
             coopnet::PlayerState state;
@@ -233,10 +275,14 @@ int runWorldClient(std::uint16_t port, const std::string& name,
     if (stats.received > 0) {
         std::printf(
             "world client %s: net %u, sent %zu, received %zu, malformed %zu, "
-            "gone %zu, remote %u at %.1f %.1f %.1f, rtt %u ms\n",
+            "gone %zu, remote %u at %.1f %.1f %.1f, world %s, game %llu ms, "
+            "rtt %u ms\n",
             name.c_str(), stats.netId, stats.sent, stats.received,
             stats.malformed, stats.gone, stats.remoteNetId, stats.lastRemote.x,
-            stats.lastRemote.y, stats.lastRemote.z, peer.session().rttMs());
+            stats.lastRemote.y, stats.lastRemote.z,
+            stats.worldKnown ? stats.serverWorld.levelName.c_str() : "unknown",
+            static_cast<unsigned long long>(stats.serverWorld.gameTimeMs),
+            peer.session().rttMs());
     } else {
         std::printf(
             "world client %s: net %u, sent %zu, received 0, rtt %u ms\n",
@@ -298,8 +344,10 @@ int runLocal(std::uint32_t runMs) {
         firstResult == 0 && remoteLooksRight(first, second.netId, "bravo");
     const bool secondOk =
         secondResult == 0 && remoteLooksRight(second, first.netId, "alpha");
+    const bool worldsOk = first.worldKnown && second.worldKnown &&
+        first.levelMismatch == 0 && second.levelMismatch == 0;
 
-    if (firstOk && secondOk && serverResult == 0) {
+    if (firstOk && secondOk && worldsOk && serverResult == 0) {
         std::printf("coopnet_world: PASSED\n");
         return 0;
     }

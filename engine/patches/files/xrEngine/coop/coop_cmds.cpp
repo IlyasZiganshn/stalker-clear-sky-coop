@@ -112,6 +112,11 @@ public:
             Msg("* coop: remote %u at %.1f %.1f %.1f, yaw %.2f", remotes[i].netId,
                 remotes[i].x, remotes[i].y, remotes[i].z, remotes[i].yaw);
         }
+
+        const u64 serverTime = coop::BridgeServerGameTime();
+        if (serverTime != 0)
+            Msg("* coop: server game time %llu ms",
+                static_cast<unsigned long long>(serverTime));
     }
 };
 

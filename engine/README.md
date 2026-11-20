@@ -72,7 +72,8 @@
   `coopnet/src/*.cpp` (include `coopnet/include`), `xrEngine.vcxproj` — команды,
   `CCC_Register` их регистрирует, `FrameMove` тикает мост.
 - `engine/patches/files/xrGame/coop/` — `coop::PublishLocalPlayer()`: раз в кадр
-  `CActor::UpdateCL` отдаёт мировой трансформ актора в `BridgePublishLocalPlayer`.
+  `CActor::UpdateCL` отдаёт мировой трансформ актора в `BridgePublishLocalPlayer`
+  и имя уровня с игровыми часами в `BridgeSetWorldInfo`.
 - `engine/patches/0002-publish-local-player.patch` — вызов в `Actor.cpp` и
   `coop\coop_player.cpp` в `xrGame.vcxproj`.
 - `engine/apply.ps1` копирует файлы и `coopnet/` в дерево и применяет патчи; повторный
@@ -81,8 +82,9 @@
 Проверено 2026-11-20: `apply.ps1` + `build.ps1` дают `xrEngine.exe`;
 `dumpbin /exports xrNetServer.dll` показывает `coop::BridgeTick`, `BridgeStartServer`,
 `BridgeStartClient`, `BridgeStop`, `BridgeStatus`, `BridgeActive`, `BridgePeerCount`,
-`BridgeSay`, `BridgeLastChat`, `BridgePublishLocalPlayer`, `BridgeRemotePlayers`;
-`dumpbin /imports xrGame.dll` подтверждает импорт `BridgePublishLocalPlayer`.
+`BridgeSay`, `BridgeLastChat`, `BridgePublishLocalPlayer`, `BridgeRemotePlayers`,
+`BridgeSetWorldInfo`, `BridgeServerGameTime`; `dumpbin /imports xrGame.dll`
+подтверждает импорт `BridgePublishLocalPlayer` и `BridgeSetWorldInfo`.
 В игре не проверялось — нужна легальная копия Clear Sky 1.5.10.
 
 ## Сборка

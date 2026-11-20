@@ -39,6 +39,14 @@ XRNETSERVER_API void BridgePublishLocalPlayer(float x, float y, float z, float y
 // returns how many were written.
 XRNETSERVER_API u32 BridgeRemotePlayers(RemotePlayer* out, u32 capacity);
 
+// Tells the bridge which level and game clock the local process is on. Call it
+// every frame; outgoing world info is throttled. A client whose level differs
+// from the server's is disconnected with a message in BridgeStatus().
+XRNETSERVER_API void BridgeSetWorldInfo(pcstr levelName, u64 gameTimeMs);
+// Server game clock as this client estimates it (last sample + local time);
+// 0 when the client has not heard from the server yet.
+XRNETSERVER_API u64 BridgeServerGameTime();
+
 // One-line state for console output; the buffer is owned by the bridge.
 XRNETSERVER_API pcstr BridgeStatus();
 } // namespace coop

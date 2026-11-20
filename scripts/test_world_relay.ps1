@@ -65,8 +65,8 @@ try {
     $exit1 = if ($first.HasExited) { $first.ExitCode } else { -1 }
     $exit2 = if ($second.HasExited) { $second.ExitCode } else { -1 }
     $ok = $exit1 -eq 0 -and $exit2 -eq 0 -and
-        $alpha -match 'remote \d+ at [\d.]+ [\d.]+ [\d.]+, rtt' -and
-        $bravo -match 'remote \d+ at [\d.]+ [\d.]+ [\d.]+, rtt' -and
+        $alpha -match 'remote \d+ at [\d.]+ [\d.]+ [\d.]+, world l01_escape' -and
+        $bravo -match 'remote \d+ at [\d.]+ [\d.]+ [\d.]+, world l01_escape' -and
         $alpha -notmatch 'received 0' -and
         $bravo -notmatch 'received 0'
     if ($ok) {

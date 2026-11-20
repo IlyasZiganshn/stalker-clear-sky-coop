@@ -19,6 +19,7 @@
 #include "coopnet/actor.h"
 #include "coopnet/client_predictor.h"
 #include "coopnet/input.h"
+#include "coopnet/interp.h"
 #include "coopnet/movement.h"
 #include "coopnet/net.h"
 #include "coopnet/peer.h"
@@ -363,6 +364,7 @@ int runMovingClient(std::uint16_t port, std::uint32_t runMs,
     const coopnet::SnapshotCodec codec = makeCodec();
     coopnet::SnapshotStore store;
     coopnet::ClientPredictor predictor{coopnet::MovementConfig{}, kDt};
+    coopnet::InterpolationBuffer interp;
     std::deque<coopnet::InputState> recent;
 
     const auto started = std::chrono::steady_clock::now();
@@ -375,6 +377,12 @@ int runMovingClient(std::uint16_t port, std::uint32_t runMs,
     coopnet::Vec3 firstPosition{};
     coopnet::Vec3 lastPosition{};
     float moved = 0.0f;
+    bool haveRemoteSample = false;
+    coopnet::Vec3 lastRemoteSample{};
+    coopnet::Vec3 firstRemoteSample{};
+    float remoteMoved = 0.0f;
+    float maxRemoteStep = 0.0f;
+    std::size_t remoteFrames = 0;
     std::size_t applied = 0;
     std::size_t rejected = 0;
     std::size_t corrections = 0;
@@ -441,6 +449,14 @@ int runMovingClient(std::uint16_t port, std::uint32_t runMs,
             }
             ++applied;
 
+            std::vector<coopnet::EntityState> merged;
+            merged.reserve(store.entities().size());
+            for (const auto& [netId, entity] : store.entities()) {
+                (void)netId;
+                merged.push_back(entity);
+            }
+            interp.push(store.tick(), now, std::move(merged));
+
             if (ownNetId != 0) {
                 const coopnet::EntityState* own = store.find(ownNetId);
                 if (own != nullptr) {
@@ -484,23 +500,56 @@ int runMovingClient(std::uint16_t port, std::uint32_t runMs,
             }
         }
 
+        if (ownNetId != 0 && interp.size() > 0) {
+            std::vector<coopnet::EntityState> sampled;
+            interp.sample(now, 100, sampled);
+            for (const auto& entity : sampled) {
+                if (entity.netId == ownNetId) {
+                    continue;
+                }
+                ++remoteFrames;
+                if (!haveRemoteSample) {
+                    firstRemoteSample = entity.position;
+                    lastRemoteSample = entity.position;
+                    haveRemoteSample = true;
+                } else {
+                    const float dx = entity.position.x - lastRemoteSample.x;
+                    const float dy = entity.position.y - lastRemoteSample.y;
+                    const float dz = entity.position.z - lastRemoteSample.z;
+                    maxRemoteStep = std::max(
+                        maxRemoteStep, std::sqrt(dx * dx + dy * dy + dz * dz));
+                    lastRemoteSample = entity.position;
+                }
+                const float rx = entity.position.x - firstRemoteSample.x;
+                const float ry = entity.position.y - firstRemoteSample.y;
+                const float rz = entity.position.z - firstRemoteSample.z;
+                remoteMoved = std::max(
+                    remoteMoved, std::sqrt(rx * rx + ry * ry + rz * rz));
+                sawOther = true;
+                break;
+            }
+        }
+
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
     const auto& stats = peer.session().stats();
     std::printf(
         "%s: net %u, snapshots %zu (rejected %zu), own actor %s, other %s, "
-        "moved %.2f m, corrections %zu (max %.3f m), rtt %u ms, "
-        "tx %llu B, rx %llu B\n",
+        "moved %.2f m, corrections %zu (max %.3f m), "
+        "remote interp %zu frames, moved %.2f m, max step %.3f m, "
+        "rtt %u ms, tx %llu B, rx %llu B\n",
         tag, ownNetId, applied, rejected, sawOwn ? "seen" : "missing",
         sawOther ? "seen" : "missing", moved, corrections, maxCorrection,
+        remoteFrames, remoteMoved, maxRemoteStep,
         peer.session().rttMs(),
         static_cast<unsigned long long>(stats.sentBytes),
         static_cast<unsigned long long>(stats.receivedBytes));
     std::fflush(stdout);
 
     if (applied > 0 && rejected <= 2 && sawOwn && sawOther && moved > 2.0f &&
-        maxCorrection < 0.15f) {
+        maxCorrection < 0.15f && remoteFrames > 30 && remoteMoved > 1.0f &&
+        maxRemoteStep < 0.5f) {
         result = 0;
     }
     return result;

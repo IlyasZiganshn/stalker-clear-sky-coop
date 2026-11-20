@@ -154,10 +154,12 @@ int serve(coopnet::UdpSocket& socket, std::atomic<bool>* stop = nullptr,
             }
             auto it = clients.find(delivered.from);
             if (it == clients.end()) {
-                // The first joined client drives actor 1000, the second 1031;
-                // both are far apart, so their interest sets differ.
+                // Actor identity comes from the handshake: net_id = 1000+slot.
                 const std::uint32_t actorNetId =
-                    clients.empty() ? 1000 : 1031;
+                    server.netIdOf(delivered.from);
+                if (actorNetId == 0 || actorNetId >= 1000 + kEntityCount) {
+                    continue;
+                }
                 it = clients.try_emplace(delivered.from, interest).first;
                 it->second.actorNetId = actorNetId;
             }

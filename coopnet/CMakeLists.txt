@@ -8,6 +8,7 @@ add_library(coopnet STATIC
     src/session.cpp
     src/handshake.cpp
     src/net.cpp
+    src/peer.cpp
 )
 target_include_directories(coopnet PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 if(WIN32)
@@ -24,6 +25,7 @@ add_executable(coopnet_tests
     tests/test_session.cpp
     tests/test_handshake.cpp
     tests/test_net.cpp
+    tests/test_peer.cpp
 )
 target_link_libraries(coopnet_tests PRIVATE coopnet)
 target_include_directories(coopnet_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)

@@ -11,6 +11,7 @@
 #include "coopnet/peer.h"
 #include "coopnet/player_state.h"
 #include "coopnet/server.h"
+#include "coopnet/spawn.h"
 #include "coopnet/world_info.h"
 
 namespace
@@ -46,7 +47,15 @@ struct Bridge
     u64 serverClockOffsetMs = 0;
     bool levelMismatch = false;
     char levelMismatchText[128] = "";
+    std::vector<std::uint8_t> localSpawn;
+    bool localSpawnSent = false;
+    std::vector<coopnet::Spawn> knownSpawns;
+    std::vector<coopnet::Spawn> pendingSpawns;
+    std::vector<u32> pendingDespawns;
 };
+
+static_assert(coop::kCoopSpawnBlobMax == coopnet::kMaxSpawnBytes,
+    "bridge blob limit must match the protocol limit");
 
 Bridge& state()
 {
@@ -105,6 +114,39 @@ void forgetRemote(Bridge& b, u32 netId)
     }
 }
 
+void removeKnownSpawn(Bridge& b, u32 netId)
+{
+    for (auto it = b.knownSpawns.begin(); it != b.knownSpawns.end(); ++it)
+    {
+        if (it->netId == netId)
+        {
+            b.knownSpawns.erase(it);
+            return;
+        }
+    }
+}
+
+// Game side has not seen this spawn yet: keep one copy per player.
+void queueSpawn(Bridge& b, const coopnet::Spawn& spawn)
+{
+    for (auto& pending : b.pendingSpawns)
+    {
+        if (pending.netId == spawn.netId)
+        {
+            pending = spawn;
+            return;
+        }
+    }
+    b.pendingSpawns.push_back(spawn);
+}
+
+void queueDespawn(Bridge& b, u32 netId)
+{
+    for (auto it = b.pendingSpawns.begin(); it != b.pendingSpawns.end();)
+        it = it->netId == netId ? b.pendingSpawns.erase(it) : it + 1;
+    b.pendingDespawns.push_back(netId);
+}
+
 // Decodes application messages the peer handed over after the handshake.
 void handleAppMessage(Bridge& b, const coopnet::Session::Delivery& delivery,
     const coopnet::Endpoint* from, u32 nowMs)
@@ -157,7 +199,37 @@ void handleAppMessage(Bridge& b, const coopnet::Session::Delivery& delivery,
 
     u32 goneNetId = 0;
     if (coopnet::decodePlayerGone(delivery.payload.data(), delivery.payload.size(), goneNetId))
+    {
         forgetRemote(b, goneNetId);
+        return;
+    }
+
+    coopnet::Spawn spawn;
+    if (coopnet::decodeSpawn(delivery.payload.data(), delivery.payload.size(), spawn))
+    {
+        if (b.server && from != nullptr)
+        {
+            spawn.netId = b.server->netIdOf(*from);
+            if (spawn.netId == 0)
+                return;
+            removeKnownSpawn(b, spawn.netId);
+            b.knownSpawns.push_back(spawn);
+            std::vector<std::uint8_t> wire;
+            if (coopnet::encodeSpawn(spawn, wire))
+                b.server->broadcastExcept(*from, coopnet::Channel::Control, wire);
+        }
+        else if (b.client && spawn.netId == b.client->netId())
+            return;
+        queueSpawn(b, spawn);
+        return;
+    }
+
+    if (coopnet::decodeSpawnGone(delivery.payload.data(), delivery.payload.size(), goneNetId))
+    {
+        forgetRemote(b, goneNetId);
+        removeKnownSpawn(b, goneNetId);
+        queueDespawn(b, goneNetId);
+    }
 }
 
 coopnet::PeerConfig makePeerConfig()
@@ -205,6 +277,11 @@ void BridgeStop()
     b.serverClockOffsetMs = 0;
     b.levelMismatch = false;
     b.levelMismatchText[0] = 0;
+    b.localSpawn.clear();
+    b.localSpawnSent = false;
+    b.knownSpawns.clear();
+    b.pendingSpawns.clear();
+    b.pendingDespawns.clear();
     for (u32 i = 0; i < kMaxRemotes; ++i)
     {
         b.remotes[i] = coopnet::PlayerState{};
@@ -315,15 +392,33 @@ void BridgeTick(u32 nowMs)
             if (event.type == coopnet::NetServer::ServerEvent::Type::Left)
             {
                 forgetRemote(b, event.netId);
+                removeKnownSpawn(b, event.netId);
+                queueDespawn(b, event.netId);
                 std::vector<std::uint8_t> wire;
                 if (coopnet::encodePlayerGone(event.netId, wire))
                     b.server->broadcast(coopnet::Channel::Control, wire);
+                if (coopnet::encodeSpawnGone(event.netId, wire))
+                    b.server->broadcast(coopnet::Channel::Control, wire);
                 continue;
             }
-            // A fresh peer gets the level and clock right away.
+            // A fresh peer gets the level, clock and every known spawn right
+            // away, so a late joiner sees players who were already in world.
             std::vector<std::uint8_t> wire;
             if (b.hasLocalWorld && coopnet::encodeWorldInfo(b.localWorld, wire))
                 b.server->send(event.endpoint, coopnet::Channel::Control, wire);
+            if (!b.localSpawn.empty())
+            {
+                coopnet::Spawn hostSpawn;
+                hostSpawn.netId = kHostNetId;
+                hostSpawn.data = b.localSpawn;
+                if (coopnet::encodeSpawn(hostSpawn, wire))
+                    b.server->send(event.endpoint, coopnet::Channel::Control, wire);
+            }
+            for (const auto& known : b.knownSpawns)
+            {
+                if (coopnet::encodeSpawn(known, wire))
+                    b.server->send(event.endpoint, coopnet::Channel::Control, wire);
+            }
         }
 
         if (b.hasLocalWorld &&
@@ -366,6 +461,17 @@ void BridgeTick(u32 nowMs)
 
         if (b.client->state() == coopnet::PeerState::Joined)
         {
+            if (!b.localSpawnSent && !b.localSpawn.empty())
+            {
+                coopnet::Spawn spawn;
+                spawn.netId = b.client->netId();
+                spawn.data = b.localSpawn;
+                std::vector<std::uint8_t> wire;
+                if (spawn.netId != 0 && coopnet::encodeSpawn(spawn, wire) &&
+                    b.client->send(coopnet::Channel::Control, wire))
+                    b.localSpawnSent = true;
+            }
+
             if (!b.worldSent && b.hasLocalWorld)
             {
                 std::vector<std::uint8_t> wire;
@@ -501,6 +607,68 @@ u32 BridgeRemotePlayers(RemotePlayer* out, u32 capacity)
         player.y = b.remotes[i].y;
         player.z = b.remotes[i].z;
         player.yaw = b.remotes[i].yaw;
+    }
+    return written;
+}
+
+bool BridgeSetLocalSpawn(const void* data, u32 size)
+{
+    Bridge& b = state();
+    if (data == nullptr || size == 0 || size > kCoopSpawnBlobMax)
+        return false;
+
+    const auto* bytes = static_cast<const std::uint8_t*>(data);
+    if (b.localSpawn.size() == size &&
+        std::equal(b.localSpawn.begin(), b.localSpawn.end(), bytes))
+        return true;
+
+    b.localSpawn.assign(bytes, bytes + size);
+    b.localSpawnSent = false;
+
+    // A host may have peers already: the client branch below picks the blob up
+    // on its own once it is joined.
+    if (b.server)
+    {
+        coopnet::Spawn hostSpawn;
+        hostSpawn.netId = kHostNetId;
+        hostSpawn.data = b.localSpawn;
+        std::vector<std::uint8_t> wire;
+        if (coopnet::encodeSpawn(hostSpawn, wire))
+            b.server->broadcast(coopnet::Channel::Control, wire);
+    }
+    return true;
+}
+
+u32 BridgeTakeSpawns(SpawnInfo* out, u32 capacity)
+{
+    Bridge& b = state();
+    if (out == nullptr || capacity == 0)
+        return 0;
+
+    u32 written = 0;
+    while (written < capacity && !b.pendingSpawns.empty())
+    {
+        const coopnet::Spawn& spawn = b.pendingSpawns.front();
+        SpawnInfo& info = out[written++];
+        info.netId = spawn.netId;
+        info.size = static_cast<u32>(spawn.data.size());
+        std::memcpy(info.data, spawn.data.data(), spawn.data.size());
+        b.pendingSpawns.erase(b.pendingSpawns.begin());
+    }
+    return written;
+}
+
+u32 BridgeTakeDespawns(u32* out, u32 capacity)
+{
+    Bridge& b = state();
+    if (out == nullptr || capacity == 0)
+        return 0;
+
+    u32 written = 0;
+    while (written < capacity && !b.pendingDespawns.empty())
+    {
+        out[written++] = b.pendingDespawns.front();
+        b.pendingDespawns.erase(b.pendingDespawns.begin());
     }
     return written;
 }

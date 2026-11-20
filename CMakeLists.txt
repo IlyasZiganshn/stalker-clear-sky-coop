@@ -52,6 +52,11 @@ target_link_libraries(coopnet_world PRIVATE coopnet Threads::Threads)
 add_test(NAME coopnet_world COMMAND coopnet_world local 3000)
 set_tests_properties(coopnet_world PROPERTIES TIMEOUT 60)
 
+add_executable(coopnet_spawn tools/coopnet_spawn/main.cpp)
+target_link_libraries(coopnet_spawn PRIVATE coopnet Threads::Threads)
+add_test(NAME coopnet_spawn COMMAND coopnet_spawn local 3000)
+set_tests_properties(coopnet_spawn PROPERTIES TIMEOUT 60)
+
 add_executable(net_sim tools/net_sim/main.cpp)
 target_link_libraries(net_sim PRIVATE coopnet Threads::Threads)
 
@@ -79,6 +84,12 @@ if(WIN32)
             -File ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_world_relay.ps1
             -BuildDir ${CMAKE_BINARY_DIR})
     set_tests_properties(coopnet_world_relay PROPERTIES TIMEOUT 120)
+
+    add_test(NAME coopnet_spawn_relay
+        COMMAND powershell -NoProfile -ExecutionPolicy Bypass
+            -File ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_spawn_relay.ps1
+            -BuildDir ${CMAKE_BINARY_DIR})
+    set_tests_properties(coopnet_spawn_relay PROPERTIES TIMEOUT 120)
 endif()
 
 message(STATUS "clear_sky_coop: coopnet configured (engine build is separate)")

@@ -1,5 +1,5 @@
 diff --git a/src/xrGame/Actor.cpp b/src/xrGame/Actor.cpp
-index b456474..f7444cf 100644
+index b456474..58c4201 100644
 --- a/src/xrGame/Actor.cpp
 +++ b/src/xrGame/Actor.cpp
 @@ -81,6 +81,8 @@
@@ -15,7 +15,7 @@ index b456474..f7444cf 100644
      inherited::UpdateCL();
      m_pPhysics_support->in_UpdateCL();
  
-+    coop::PublishLocalPlayer();
++    coop::PublishLocalPlayer(this);
 +
      if (g_Alive())
          PickupModeUpdate();

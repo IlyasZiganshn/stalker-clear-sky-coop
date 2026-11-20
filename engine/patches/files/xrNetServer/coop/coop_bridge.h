@@ -39,6 +39,27 @@ XRNETSERVER_API void BridgePublishLocalPlayer(float x, float y, float z, float y
 // returns how many were written.
 XRNETSERVER_API u32 BridgeRemotePlayers(RemotePlayer* out, u32 capacity);
 
+// One serialized entity spawn (CSE_Abstract bytes) tagged with its owner.
+// The bridge never parses the blob; the game side does.
+constexpr u32 kCoopSpawnBlobMax = 4096;
+
+struct SpawnInfo
+{
+    u32 netId = 0;
+    u32 size = 0;
+    std::uint8_t data[kCoopSpawnBlobMax] = {};
+};
+
+// Hands the local actor spawn to the bridge: a client sends it to the host on
+// join, a host sends it to every peer (including later joiners). Safe to call
+// every frame; false means the blob is empty or too large.
+XRNETSERVER_API bool BridgeSetLocalSpawn(const void* data, u32 size);
+// Copies spawns received from peers into out and returns how many were written.
+// Each net_id is reported once until it leaves and joins again.
+XRNETSERVER_API u32 BridgeTakeSpawns(SpawnInfo* out, u32 capacity);
+// Copies net_ids of players that left; the game side destroys its copies.
+XRNETSERVER_API u32 BridgeTakeDespawns(u32* out, u32 capacity);
+
 // Tells the bridge which level and game clock the local process is on. Call it
 // every frame; outgoing world info is throttled. A client whose level differs
 // from the server's is disconnected with a message in BridgeStatus().

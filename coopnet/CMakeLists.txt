@@ -27,6 +27,7 @@ add_library(coopnet STATIC
     src/app_message.cpp
     src/player_state.cpp
     src/world_info.cpp
+    src/spawn.cpp
 )
 target_include_directories(coopnet PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 if(WIN32)
@@ -62,6 +63,7 @@ add_executable(coopnet_tests
     tests/test_app_message.cpp
     tests/test_player_state.cpp
     tests/test_world_info.cpp
+    tests/test_spawn.cpp
 )
 target_link_libraries(coopnet_tests PRIVATE coopnet Threads::Threads)
 target_include_directories(coopnet_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)

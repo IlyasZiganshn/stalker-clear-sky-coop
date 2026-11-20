@@ -71,9 +71,13 @@
 - `engine/patches/0001-coopnet-in-engine.patch` — `xrNetServer.vcxproj` компилирует
   `coopnet/src/*.cpp` (include `coopnet/include`), `xrEngine.vcxproj` — команды,
   `CCC_Register` их регистрирует, `FrameMove` тикает мост.
-- `engine/patches/files/xrGame/coop/` — `coop::PublishLocalPlayer()`: раз в кадр
-  `CActor::UpdateCL` отдаёт мировой трансформ актора в `BridgePublishLocalPlayer`
-  и имя уровня с игровыми часами в `BridgeSetWorldInfo`.
+- `engine/patches/files/xrGame/coop/` — `coop::PublishLocalPlayer(CActor*)`: раз
+  в кадр `CActor::UpdateCL` отдаёт мировой трансформ локального актора в
+  `BridgePublishLocalPlayer` и имя уровня с игровыми часами в `BridgeSetWorldInfo`.
+  Там же спавн: `Spawn_Write` локального актора отдаётся в `BridgeSetLocalSpawn`,
+  полученные блобы (`BridgeTakeSpawns`) спавнятся через `Level().g_sv_Spawn` с
+  локальным game ID из `0xF000+`, `LOCAL`/`ASPLAYER` снимаются, кукла остаётся
+  включённой; `BridgeTakeDespawns` удаляет её.
 - `engine/patches/0002-publish-local-player.patch` — вызов в `Actor.cpp` и
   `coop\coop_player.cpp` в `xrGame.vcxproj`.
 - `engine/apply.ps1` копирует файлы и `coopnet/` в дерево и применяет патчи; повторный
@@ -83,8 +87,10 @@
 `dumpbin /exports xrNetServer.dll` показывает `coop::BridgeTick`, `BridgeStartServer`,
 `BridgeStartClient`, `BridgeStop`, `BridgeStatus`, `BridgeActive`, `BridgePeerCount`,
 `BridgeSay`, `BridgeLastChat`, `BridgePublishLocalPlayer`, `BridgeRemotePlayers`,
-`BridgeSetWorldInfo`, `BridgeServerGameTime`; `dumpbin /imports xrGame.dll`
-подтверждает импорт `BridgePublishLocalPlayer` и `BridgeSetWorldInfo`.
+`BridgeSetWorldInfo`, `BridgeServerGameTime`, `BridgeSetLocalSpawn`,
+`BridgeTakeSpawns`, `BridgeTakeDespawns`; `dumpbin /imports xrGame.dll`
+подтверждает импорт `BridgePublishLocalPlayer`, `BridgeSetWorldInfo`,
+`BridgeSetLocalSpawn`, `BridgeTakeSpawns` и `BridgeTakeDespawns`.
 В игре не проверялось — нужна легальная копия Clear Sky 1.5.10.
 
 ## Сборка

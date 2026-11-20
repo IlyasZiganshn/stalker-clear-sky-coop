@@ -1,0 +1,13 @@
+diff --git a/src/xrGame/Actor_Movement.cpp b/src/xrGame/Actor_Movement.cpp
+index bce9fae..0607406 100644
+--- a/src/xrGame/Actor_Movement.cpp
++++ b/src/xrGame/Actor_Movement.cpp
+@@ -325,7 +325,7 @@ void CActor::g_cl_CheckControls(u32 mstate_wf, Fvector& vControlAccel, float& Ju
+         } //(mstate_real&mcAnyMove)
+     } // peOnGround || peAtWall
+ 
+-    if (IsGameTypeSingle() && cam_eff_factor > EPS)
++    if (IsGameTypeSingle() && cam_eff_factor > EPS && Level().CurrentControlEntity() == this)
+     {
+         LPCSTR state_anm = NULL;
+ 

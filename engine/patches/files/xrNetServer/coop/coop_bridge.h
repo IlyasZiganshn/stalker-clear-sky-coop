@@ -39,6 +39,44 @@ XRNETSERVER_API void BridgePublishLocalPlayer(float x, float y, float z, float y
 // returns how many were written.
 XRNETSERVER_API u32 BridgeRemotePlayers(RemotePlayer* out, u32 capacity);
 
+// Buttons carried by PlayerInput::buttons; values match coopnet::InputButton.
+enum InputButtons : u16
+{
+    kInputButtonFire = 1u << 0,
+    kInputButtonAim = 1u << 1,
+    kInputButtonJump = 1u << 2,
+    kInputButtonCrouch = 1u << 3,
+    kInputButtonSprint = 1u << 4,
+    kInputButtonUse = 1u << 5,
+    kInputButtonReload = 1u << 6,
+};
+
+// One input sample of a remote player: what its owner held this frame. The
+// host turns it into movement of the doll; clients only see transforms.
+struct PlayerInput
+{
+    u32 netId = 0;
+    float moveX = 0.f;   // [-1, 1], strafe right positive
+    float moveY = 0.f;   // [-1, 1], forward positive
+    float yaw = 0.f;     // radians
+    float pitch = 0.f;   // radians
+    u16 buttons = 0;
+    u8 weaponSlot = 0;
+};
+
+// Publishes the local player input (client -> host), throttled to 60 Hz.
+// No-op on the host: its own actor is driven by local input already.
+XRNETSERVER_API void BridgePublishLocalInput(float moveX, float moveY, float yaw,
+    float pitch, u16 buttons, u8 weaponSlot);
+// Copies the latest input of every remote player (stale after 2 s).
+XRNETSERVER_API u32 BridgeRemoteInputs(PlayerInput* out, u32 capacity);
+
+// Host only: broadcasts the transform of a doll simulated from input, so every
+// peer sees the authority's position instead of the owner's prediction. Call it
+// at snapshot rate (20 Hz); the bridge does not throttle per doll.
+XRNETSERVER_API void BridgePublishRemoteState(u32 netId, float x, float y,
+    float z, float yaw);
+
 // One serialized entity spawn (CSE_Abstract bytes) tagged with its owner.
 // The bridge never parses the blob; the game side does.
 constexpr u32 kCoopSpawnBlobMax = 4096;

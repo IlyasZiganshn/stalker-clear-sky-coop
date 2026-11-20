@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "coopnet/app_message.h"
+#include "coopnet/input.h"
 #include "coopnet/net.h"
 #include "coopnet/peer.h"
 #include "coopnet/player_state.h"
@@ -19,8 +20,11 @@ namespace
 constexpr u32 kBuildHash = 0x43534B59; // "CSKY"
 constexpr u32 kHostNetId = 1;
 constexpr u32 kPublishIntervalMs = 50;
+constexpr u32 kInputIntervalMs = 16;
 constexpr u32 kWorldBroadcastMs = 1000;
 constexpr u32 kRemoteTimeoutMs = 2000;
+// Input is sent at 60 Hz: half a second of silence means the stream is dead.
+constexpr u32 kInputTimeoutMs = 500;
 constexpr u32 kMaxRemotes = 8;
 
 struct Bridge
@@ -38,6 +42,10 @@ struct Bridge
     u32 nowMs = 0;
     coopnet::PlayerState remotes[kMaxRemotes];
     u32 remoteMs[kMaxRemotes] = {};
+    coop::PlayerInput remoteInputs[kMaxRemotes];
+    u32 remoteInputMs[kMaxRemotes] = {};
+    u32 localInputMs = 0;
+    u32 inputTick = 0;
     coopnet::WorldInfo localWorld;
     bool hasLocalWorld = false;
     u32 worldBroadcastMs = 0;
@@ -56,6 +64,15 @@ struct Bridge
 
 static_assert(coop::kCoopSpawnBlobMax == coopnet::kMaxSpawnBytes,
     "bridge blob limit must match the protocol limit");
+
+static_assert(coop::kInputButtonFire == coopnet::kButtonFire &&
+        coop::kInputButtonAim == coopnet::kButtonAim &&
+        coop::kInputButtonJump == coopnet::kButtonJump &&
+        coop::kInputButtonCrouch == coopnet::kButtonCrouch &&
+        coop::kInputButtonSprint == coopnet::kButtonSprint &&
+        coop::kInputButtonUse == coopnet::kButtonUse &&
+        coop::kInputButtonReload == coopnet::kButtonReload,
+    "bridge button mask must match the protocol");
 
 Bridge& state()
 {
@@ -114,6 +131,63 @@ void forgetRemote(Bridge& b, u32 netId)
     }
 }
 
+void rememberInput(Bridge& b, const coopnet::InputState& input, u32 netId, u32 nowMs)
+{
+    coop::PlayerInput sample;
+    sample.netId = netId;
+    sample.moveX = input.moveX;
+    sample.moveY = input.moveY;
+    sample.yaw = input.viewYaw;
+    sample.pitch = input.viewPitch;
+    sample.buttons = input.buttons;
+    sample.weaponSlot = input.weaponSlot;
+
+    for (u32 i = 0; i < kMaxRemotes; ++i)
+    {
+        if (b.remoteInputs[i].netId == netId)
+        {
+            b.remoteInputs[i] = sample;
+            b.remoteInputMs[i] = nowMs;
+            return;
+        }
+    }
+    for (u32 i = 0; i < kMaxRemotes; ++i)
+    {
+        if (b.remoteInputs[i].netId == 0)
+        {
+            b.remoteInputs[i] = sample;
+            b.remoteInputMs[i] = nowMs;
+            return;
+        }
+    }
+    u32 oldest = 0;
+    for (u32 i = 1; i < kMaxRemotes; ++i)
+        if (b.remoteInputMs[i] < b.remoteInputMs[oldest])
+            oldest = i;
+    b.remoteInputs[oldest] = sample;
+    b.remoteInputMs[oldest] = nowMs;
+}
+
+void forgetInput(Bridge& b, u32 netId)
+{
+    for (u32 i = 0; i < kMaxRemotes; ++i)
+    {
+        if (b.remoteInputs[i].netId == netId)
+        {
+            b.remoteInputs[i] = coop::PlayerInput{};
+            b.remoteInputMs[i] = 0;
+        }
+    }
+}
+
+bool hasRemoteInput(const Bridge& b, u32 netId, u32 nowMs)
+{
+    for (u32 i = 0; i < kMaxRemotes; ++i)
+        if (b.remoteInputs[i].netId == netId && nowMs - b.remoteInputMs[i] <= kInputTimeoutMs)
+            return true;
+    return false;
+}
+
 void removeKnownSpawn(Bridge& b, u32 netId)
 {
     for (auto it = b.knownSpawns.begin(); it != b.knownSpawns.end(); ++it)
@@ -151,6 +225,21 @@ void queueDespawn(Bridge& b, u32 netId)
 void handleAppMessage(Bridge& b, const coopnet::Session::Delivery& delivery,
     const coopnet::Endpoint* from, u32 nowMs)
 {
+    // Input comes on its own unreliable channel and only matters to the host:
+    // it is simulated there, never relayed to other peers.
+    if (delivery.channel == coopnet::Channel::Input)
+    {
+        coopnet::InputState input;
+        if (b.server != nullptr && from != nullptr &&
+            coopnet::decodeInput(delivery.payload.data(), delivery.payload.size(), input))
+        {
+            const u32 netId = b.server->netIdOf(*from);
+            if (netId != 0)
+                rememberInput(b, input, netId, nowMs);
+        }
+        return;
+    }
+
     if (delivery.channel != coopnet::Channel::Control)
         return;
 
@@ -189,9 +278,16 @@ void handleAppMessage(Bridge& b, const coopnet::Session::Delivery& delivery,
             playerState.netId = b.server->netIdOf(*from);
             if (playerState.netId == 0)
                 return;
-            std::vector<std::uint8_t> wire;
-            if (coopnet::encodePlayerState(playerState, wire))
-                b.server->broadcastExcept(*from, coopnet::Channel::Control, wire);
+            rememberRemote(b, playerState, nowMs);
+            // A peer with a live input stream is simulated by the host; relaying
+            // its own transform would race with the authority.
+            if (!hasRemoteInput(b, playerState.netId, nowMs))
+            {
+                std::vector<std::uint8_t> wire;
+                if (coopnet::encodePlayerState(playerState, wire))
+                    b.server->broadcastExcept(*from, coopnet::Channel::Control, wire);
+            }
+            return;
         }
         rememberRemote(b, playerState, nowMs);
         return;
@@ -268,6 +364,8 @@ void BridgeStop()
     b.lastChat[0] = 0;
     b.local = coopnet::PlayerState{};
     b.localPublishMs = 0;
+    b.localInputMs = 0;
+    b.inputTick = 0;
     b.localWorld = coopnet::WorldInfo{};
     b.hasLocalWorld = false;
     b.worldBroadcastMs = 0;
@@ -286,6 +384,8 @@ void BridgeStop()
     {
         b.remotes[i] = coopnet::PlayerState{};
         b.remoteMs[i] = 0;
+        b.remoteInputs[i] = PlayerInput{};
+        b.remoteInputMs[i] = 0;
     }
     std::snprintf(b.status, sizeof(b.status), "coop: off");
 }
@@ -392,6 +492,7 @@ void BridgeTick(u32 nowMs)
             if (event.type == coopnet::NetServer::ServerEvent::Type::Left)
             {
                 forgetRemote(b, event.netId);
+                forgetInput(b, event.netId);
                 removeKnownSpawn(b, event.netId);
                 queueDespawn(b, event.netId);
                 std::vector<std::uint8_t> wire;
@@ -609,6 +710,68 @@ u32 BridgeRemotePlayers(RemotePlayer* out, u32 capacity)
         player.yaw = b.remotes[i].yaw;
     }
     return written;
+}
+
+void BridgePublishLocalInput(float moveX, float moveY, float yaw, float pitch,
+    u16 buttons, u8 weaponSlot)
+{
+    Bridge& b = state();
+    // The host's own actor already runs from local input.
+    if (!b.client || b.client->state() != coopnet::PeerState::Joined)
+        return;
+    if (b.nowMs - b.localInputMs < kInputIntervalMs)
+        return;
+
+    coopnet::InputState input;
+    input.tick = b.inputTick + 1;
+    input.moveX = moveX;
+    input.moveY = moveY;
+    input.viewYaw = yaw;
+    input.viewPitch = pitch;
+    input.buttons = buttons;
+    input.weaponSlot = weaponSlot;
+
+    const std::vector<std::uint8_t> wire = coopnet::encodeInput(input);
+    if (!b.client->send(coopnet::Channel::Input, wire))
+        return;
+    b.inputTick = input.tick;
+    b.localInputMs = b.nowMs;
+}
+
+u32 BridgeRemoteInputs(PlayerInput* out, u32 capacity)
+{
+    Bridge& b = state();
+    if (out == nullptr || capacity == 0)
+        return 0;
+
+    u32 written = 0;
+    for (u32 i = 0; i < kMaxRemotes && written < capacity; ++i)
+    {
+        if (b.remoteInputs[i].netId == 0)
+            continue;
+        if (b.nowMs - b.remoteInputMs[i] > kInputTimeoutMs)
+            continue;
+        out[written++] = b.remoteInputs[i];
+    }
+    return written;
+}
+
+void BridgePublishRemoteState(u32 netId, float x, float y, float z, float yaw)
+{
+    Bridge& b = state();
+    if (b.server == nullptr || netId == 0)
+        return;
+
+    coopnet::PlayerState sample;
+    sample.netId = netId;
+    sample.x = x;
+    sample.y = y;
+    sample.z = z;
+    sample.yaw = yaw;
+
+    std::vector<std::uint8_t> wire;
+    if (coopnet::encodePlayerState(sample, wire))
+        b.server->broadcast(coopnet::Channel::Control, wire);
 }
 
 bool BridgeSetLocalSpawn(const void* data, u32 size)

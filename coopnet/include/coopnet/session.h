@@ -34,6 +34,8 @@ public:
     struct Stats {
         std::uint64_t sentDatagrams = 0;
         std::uint64_t receivedDatagrams = 0;
+        std::uint64_t sentBytes = 0;
+        std::uint64_t receivedBytes = 0;
         std::uint64_t protocolErrors = 0;
         std::uint64_t malformed = 0;
         std::uint64_t droppedDatagrams = 0;

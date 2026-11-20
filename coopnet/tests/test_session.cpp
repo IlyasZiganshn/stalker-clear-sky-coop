@@ -163,6 +163,32 @@ COOP_TEST(session_measures_round_trip) {
     CHECK_EQ(client.rttMs(), 10u);
 }
 
+COOP_TEST(session_counts_traffic_bytes) {
+    Session client;
+    Session server;
+
+    CHECK(client.send(Channel::Control, bytesOf("hello")));
+    const auto datagrams = client.poll(0);
+    CHECK_EQ(datagrams.size(), std::size_t{1});
+
+    std::uint64_t expected = 0;
+    for (const auto& datagram : datagrams) {
+        server.onDatagram(datagram.data(), datagram.size(), 0);
+        expected += datagram.size();
+    }
+
+    CHECK_EQ(client.stats().sentDatagrams, std::uint64_t{1});
+    CHECK_EQ(client.stats().sentBytes, expected);
+    CHECK_EQ(server.stats().receivedDatagrams, std::uint64_t{1});
+    CHECK_EQ(server.stats().receivedBytes, expected);
+    CHECK_EQ(server.stats().sentBytes, std::uint64_t{0});
+
+    // Malformed input still counts as received traffic.
+    const std::uint8_t tiny[] = {1, 2, 3};
+    server.onDatagram(tiny, sizeof(tiny), 0);
+    CHECK_EQ(server.stats().receivedBytes, expected + sizeof(tiny));
+}
+
 COOP_TEST(session_survives_lossy_bidirectional_link) {
     Session client;
     Session server;

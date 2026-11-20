@@ -16,6 +16,7 @@
 
 #include "coopnet/net.h"
 #include "coopnet/peer.h"
+#include "coopnet/session.h"
 
 namespace {
 
@@ -49,6 +50,20 @@ coopnet::PeerConfig clientConfig() {
 std::vector<std::uint8_t> messagePayload(std::size_t index) {
     const std::string text = "echo-" + std::to_string(index);
     return std::vector<std::uint8_t>(text.begin(), text.end());
+}
+
+void printTraffic(const char* who, const coopnet::Session& session) {
+    const auto& stats = session.stats();
+    std::printf(
+        "%s: rtt %u ms, sent %llu datagrams / %llu B, received %llu / %llu B, "
+        "malformed %llu\n",
+        who, session.rttMs(),
+        static_cast<unsigned long long>(stats.sentDatagrams),
+        static_cast<unsigned long long>(stats.sentBytes),
+        static_cast<unsigned long long>(stats.receivedDatagrams),
+        static_cast<unsigned long long>(stats.receivedBytes),
+        static_cast<unsigned long long>(stats.malformed));
+    std::fflush(stdout);
 }
 
 int serve(coopnet::UdpSocket& socket, std::atomic<bool>& stop) {
@@ -100,6 +115,7 @@ int serve(coopnet::UdpSocket& socket, std::atomic<bool>& stop) {
         }
         if (sawJoin && peer.timedOut(now)) {
             std::printf("echo server: client gone\n");
+            printTraffic("echo server", peer.session());
             return 0;
         }
 
@@ -184,6 +200,7 @@ int runClient(std::uint16_t port, const std::string& name) {
 
     std::printf("echo client: %zu/%zu echoes, state %d\n", received, kMessageCount,
                 static_cast<int>(peer.state()));
+    printTraffic("echo client", peer.session());
     return result;
 }
 

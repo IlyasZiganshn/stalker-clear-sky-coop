@@ -48,6 +48,7 @@ void Session::emit(std::vector<std::vector<std::uint8_t>>& out, Channel channel,
 
     out.push_back(writer.data());
     ++stats_.sentDatagrams;
+    stats_.sentBytes += writer.data().size();
     lastSendMs_ = nowMs;
     if ((flags & (kFlagAckOnly | kFlagKeepalive)) == 0) {
         channelState.lastSentSequence = sequence;
@@ -57,6 +58,7 @@ void Session::emit(std::vector<std::vector<std::uint8_t>>& out, Channel channel,
 void Session::onDatagram(const std::uint8_t* data, std::size_t size,
                          std::uint32_t nowMs) {
     ++stats_.receivedDatagrams;
+    stats_.receivedBytes += size;
     if (size < PacketHeader::kByteSize) {
         ++stats_.malformed;
         return;

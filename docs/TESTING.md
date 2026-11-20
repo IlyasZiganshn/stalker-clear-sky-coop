@@ -66,8 +66,11 @@
 
 ## Что смотреть в логе
 
-- `coop: listening`, `coop: connected`, `coop: remote player N spawned as game id`,
-  `coop: remote player N removed` — жизненный цикл сессии и кукол.
+- `coop: listening`, `coop: joined <адрес>`, `coop: peer N ('имя') joined`,
+  `coop: remote player N spawned as game id`, `coop: remote player N removed` —
+  жизненный цикл сессии и кукол.
+- `! coop: connection timed out`, `! coop: join denied, reason N` — разрыв и отказ
+  видны в логе, а не только в `coop_status`.
 - `! coop: spawn of remote player N failed` — блоб не прошёл `g_sv_Spawn`.
 - `BridgeStatus()` (выводится `coop_status`) — число пиров, RTT, последняя ошибка.
 

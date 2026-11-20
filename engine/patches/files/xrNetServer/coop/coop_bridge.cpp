@@ -46,6 +46,8 @@ struct Bridge
     char status[192] = "coop: off";
     char lastChat[256] = "";
     char playerName[coopnet::kMaxNameBytes + 1] = "player";
+    bool clientJoinedLogged = false;
+    bool clientEndLogged = false;
     coopnet::PlayerState local;
     u32 localPublishMs = 0;
     u32 nowMs = 0;
@@ -387,6 +389,8 @@ void BridgeStop()
     b.serverClockOffsetMs = 0;
     b.levelMismatch = false;
     b.levelMismatchText[0] = 0;
+    b.clientJoinedLogged = false;
+    b.clientEndLogged = false;
     resetLevelState(b);
     std::snprintf(b.status, sizeof(b.status), "coop: off");
 }
@@ -508,6 +512,7 @@ void BridgeTick(u32 nowMs)
         {
             if (event.type == coopnet::NetServer::ServerEvent::Type::Left)
             {
+                Msg("* coop: peer %u left", event.netId);
                 forgetRemote(b, event.netId);
                 forgetInput(b, event.netId);
                 removeKnownSpawn(b, event.netId);
@@ -521,6 +526,9 @@ void BridgeTick(u32 nowMs)
             }
             // A fresh peer gets the level, clock and every known spawn right
             // away, so a late joiner sees players who were already in world.
+            const std::string name = b.server->nameOfNetId(event.netId);
+            Msg("* coop: peer %u ('%s') joined", event.netId,
+                name.empty() ? "?" : name.c_str());
             std::vector<std::uint8_t> wire;
             if (b.hasLocalWorld && coopnet::encodeWorldInfo(b.localWorld, wire))
                 b.server->send(event.endpoint, coopnet::Channel::Control, wire);
@@ -577,8 +585,22 @@ void BridgeTick(u32 nowMs)
         for (const auto& delivery : b.client->takeDelivered())
             handleAppMessage(b, delivery, nullptr, nowMs);
 
-        if (b.client->state() == coopnet::PeerState::Joined)
+        if (b.client->timedOut(nowMs))
         {
+            if (!b.clientEndLogged)
+            {
+                Msg("! coop: connection timed out");
+                b.clientEndLogged = true;
+            }
+            std::snprintf(b.status, sizeof(b.status), "coop: connection timed out");
+        }
+        else if (b.client->state() == coopnet::PeerState::Joined)
+        {
+            if (!b.clientJoinedLogged)
+            {
+                Msg("* coop: joined %s", b.serverEndpoint.toString().c_str());
+                b.clientJoinedLogged = true;
+            }
             // The spawn is resent at a low rate: a peer that reloaded its level
             // loses every doll, and only a fresh blob restores them.
             const bool resendDue = b.spawnResendMs == 0 ||
@@ -628,8 +650,16 @@ void BridgeTick(u32 nowMs)
                 std::snprintf(b.status, sizeof(b.status), "coop: joined %s, rtt %u ms",
                     b.serverEndpoint.toString().c_str(), unsigned(b.client->session().rttMs()));
         }
-        else if (b.client->timedOut(nowMs))
-            std::snprintf(b.status, sizeof(b.status), "coop: connection timed out");
+        else if (b.client->state() == coopnet::PeerState::Denied)
+        {
+            if (!b.clientEndLogged)
+            {
+                Msg("! coop: join denied, reason %u", unsigned(b.client->denyReason()));
+                b.clientEndLogged = true;
+            }
+            std::snprintf(b.status, sizeof(b.status), "coop: denied %s",
+                b.serverEndpoint.toString().c_str());
+        }
         else
             std::snprintf(b.status, sizeof(b.status), "coop: %s %s",
                 clientStateName(b.client->state()), b.serverEndpoint.toString().c_str());

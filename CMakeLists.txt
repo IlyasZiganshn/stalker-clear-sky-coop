@@ -34,4 +34,9 @@ set_tests_properties(coopnet_snap PROPERTIES TIMEOUT 60)
 add_test(NAME coopnet_snap_two COMMAND coopnet_snap two 3000)
 set_tests_properties(coopnet_snap_two PROPERTIES TIMEOUT 60)
 
+add_executable(coopnet_move tools/coopnet_move/main.cpp)
+target_link_libraries(coopnet_move PRIVATE coopnet Threads::Threads)
+add_test(NAME coopnet_move COMMAND coopnet_move local 600)
+set_tests_properties(coopnet_move PROPERTIES TIMEOUT 60)
+
 message(STATUS "clear_sky_coop: coopnet configured (engine build is separate)")

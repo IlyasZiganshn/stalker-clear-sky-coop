@@ -104,6 +104,14 @@ public:
         pcstr chat = coop::BridgeLastChat();
         if (chat[0])
             Msg("* coop: last chat %s", chat);
+
+        coop::RemotePlayer remotes[4];
+        const u32 count = coop::BridgeRemotePlayers(remotes, 4);
+        for (u32 i = 0; i < count; ++i)
+        {
+            Msg("* coop: remote %u at %.1f %.1f %.1f, yaw %.2f", remotes[i].netId,
+                remotes[i].x, remotes[i].y, remotes[i].z, remotes[i].yaw);
+        }
     }
 };
 

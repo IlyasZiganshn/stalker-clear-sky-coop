@@ -25,6 +25,7 @@ add_library(coopnet STATIC
     src/client_predictor.cpp
     src/actor.cpp
     src/app_message.cpp
+    src/player_state.cpp
 )
 target_include_directories(coopnet PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 if(WIN32)
@@ -58,6 +59,7 @@ add_executable(coopnet_tests
     tests/test_movement.cpp
     tests/test_actor.cpp
     tests/test_app_message.cpp
+    tests/test_player_state.cpp
 )
 target_link_libraries(coopnet_tests PRIVATE coopnet Threads::Threads)
 target_include_directories(coopnet_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)

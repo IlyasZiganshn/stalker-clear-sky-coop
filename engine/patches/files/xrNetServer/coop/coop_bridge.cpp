@@ -9,11 +9,16 @@
 #include "coopnet/app_message.h"
 #include "coopnet/net.h"
 #include "coopnet/peer.h"
+#include "coopnet/player_state.h"
 #include "coopnet/server.h"
 
 namespace
 {
 constexpr u32 kBuildHash = 0x43534B59; // "CSKY"
+constexpr u32 kHostNetId = 1;
+constexpr u32 kPublishIntervalMs = 50;
+constexpr u32 kRemoteTimeoutMs = 2000;
+constexpr u32 kMaxRemotes = 8;
 
 struct Bridge
 {
@@ -25,6 +30,11 @@ struct Bridge
     u16 port = 0;
     char status[192] = "coop: off";
     char lastChat[256] = "";
+    coopnet::PlayerState local;
+    u32 localPublishMs = 0;
+    u32 nowMs = 0;
+    coopnet::PlayerState remotes[kMaxRemotes];
+    u32 remoteMs[kMaxRemotes] = {};
 };
 
 Bridge& state()
@@ -43,27 +53,72 @@ void rememberChat(const coopnet::AppMessage& message)
             unsigned(message.sender), message.text.c_str());
 }
 
+void rememberRemote(Bridge& b, const coopnet::PlayerState& state, u32 nowMs)
+{
+    for (u32 i = 0; i < kMaxRemotes; ++i)
+    {
+        if (b.remotes[i].netId == state.netId)
+        {
+            b.remotes[i] = state;
+            b.remoteMs[i] = nowMs;
+            return;
+        }
+    }
+    for (u32 i = 0; i < kMaxRemotes; ++i)
+    {
+        if (b.remotes[i].netId == 0)
+        {
+            b.remotes[i] = state;
+            b.remoteMs[i] = nowMs;
+            return;
+        }
+    }
+    // Table is full: replace the oldest sample.
+    u32 oldest = 0;
+    for (u32 i = 1; i < kMaxRemotes; ++i)
+        if (b.remoteMs[i] < b.remoteMs[oldest])
+            oldest = i;
+    b.remotes[oldest] = state;
+    b.remoteMs[oldest] = nowMs;
+}
+
 // Decodes application messages the peer handed over after the handshake.
 void handleAppMessage(Bridge& b, const coopnet::Session::Delivery& delivery,
-    const coopnet::Endpoint* from)
+    const coopnet::Endpoint* from, u32 nowMs)
 {
     if (delivery.channel != coopnet::Channel::Control)
         return;
 
     coopnet::AppMessage message;
-    if (!coopnet::decodeAppMessage(delivery.payload.data(), delivery.payload.size(), message))
+    if (coopnet::decodeAppMessage(delivery.payload.data(), delivery.payload.size(), message))
+    {
+        if (b.server && from != nullptr)
+        {
+            message.sender = b.server->netIdOf(*from);
+            if (message.sender == 0)
+                return;
+            std::vector<std::uint8_t> wire;
+            if (coopnet::encodeAppMessage(message, wire))
+                b.server->broadcastExcept(*from, coopnet::Channel::Control, wire);
+        }
+        rememberChat(message);
+        return;
+    }
+
+    coopnet::PlayerState playerState;
+    if (!coopnet::decodePlayerState(delivery.payload.data(), delivery.payload.size(), playerState))
         return;
 
     if (b.server && from != nullptr)
     {
-        message.sender = b.server->netIdOf(*from);
-        if (message.sender == 0)
+        playerState.netId = b.server->netIdOf(*from);
+        if (playerState.netId == 0)
             return;
         std::vector<std::uint8_t> wire;
-        if (coopnet::encodeAppMessage(message, wire))
+        if (coopnet::encodePlayerState(playerState, wire))
             b.server->broadcastExcept(*from, coopnet::Channel::Control, wire);
     }
-    rememberChat(message);
+    rememberRemote(b, playerState, nowMs);
 }
 
 coopnet::PeerConfig makePeerConfig()
@@ -100,6 +155,13 @@ void BridgeStop()
     b.network.reset();
     b.port = 0;
     b.lastChat[0] = 0;
+    b.local = coopnet::PlayerState{};
+    b.localPublishMs = 0;
+    for (u32 i = 0; i < kMaxRemotes; ++i)
+    {
+        b.remotes[i] = coopnet::PlayerState{};
+        b.remoteMs[i] = 0;
+    }
     std::snprintf(b.status, sizeof(b.status), "coop: off");
 }
 
@@ -179,6 +241,7 @@ void BridgeTick(u32 nowMs)
     Bridge& b = state();
     if (!b.socket)
         return;
+    b.nowMs = nowMs;
 
     std::uint8_t buffer[2048];
     for (;;)
@@ -198,7 +261,7 @@ void BridgeTick(u32 nowMs)
         for (const auto& outgoing : b.server->poll(nowMs))
             b.socket->sendTo(outgoing.to, outgoing.data.data(), outgoing.data.size());
         for (const auto& delivery : b.server->takeDelivered())
-            handleAppMessage(b, delivery.delivery, &delivery.from);
+            handleAppMessage(b, delivery.delivery, &delivery.from, nowMs);
         std::snprintf(b.status, sizeof(b.status), "coop: hosting on port %u, peers %llu, joined %llu",
             unsigned(b.port),
             static_cast<unsigned long long>(b.server->peerCount()),
@@ -211,7 +274,7 @@ void BridgeTick(u32 nowMs)
         for (const auto& datagram : b.client->poll(nowMs))
             b.socket->sendTo(b.serverEndpoint, datagram.data(), datagram.size());
         for (const auto& delivery : b.client->takeDelivered())
-            handleAppMessage(b, delivery, nullptr);
+            handleAppMessage(b, delivery, nullptr, nowMs);
 
         if (b.client->state() == coopnet::PeerState::Joined)
             std::snprintf(b.status, sizeof(b.status), "coop: joined %s, rtt %u ms",
@@ -261,6 +324,69 @@ bool BridgeSay(pcstr text)
 pcstr BridgeLastChat()
 {
     return state().lastChat;
+}
+
+void BridgePublishLocalPlayer(float x, float y, float z, float yaw)
+{
+    Bridge& b = state();
+    if (!b.socket)
+        return;
+    if (b.nowMs - b.localPublishMs < kPublishIntervalMs)
+        return;
+
+    coopnet::PlayerState sample;
+    sample.x = x;
+    sample.y = y;
+    sample.z = z;
+    sample.yaw = yaw;
+
+    std::vector<std::uint8_t> wire;
+    if (b.client)
+    {
+        if (b.client->state() != coopnet::PeerState::Joined)
+            return;
+        sample.netId = b.client->netId();
+        if (!coopnet::encodePlayerState(sample, wire))
+            return;
+        b.client->send(coopnet::Channel::Control, wire);
+    }
+    else if (b.server)
+    {
+        // Peers never get a net_id of their own from a headless host, so the
+        // host transform travels under a reserved id outside 1000..1003.
+        sample.netId = kHostNetId;
+        if (!coopnet::encodePlayerState(sample, wire))
+            return;
+        b.server->broadcast(coopnet::Channel::Control, wire);
+    }
+    else
+        return;
+
+    b.local = sample;
+    b.localPublishMs = b.nowMs;
+}
+
+u32 BridgeRemotePlayers(RemotePlayer* out, u32 capacity)
+{
+    Bridge& b = state();
+    if (out == nullptr || capacity == 0)
+        return 0;
+
+    u32 written = 0;
+    for (u32 i = 0; i < kMaxRemotes && written < capacity; ++i)
+    {
+        if (b.remotes[i].netId == 0)
+            continue;
+        if (b.nowMs - b.remoteMs[i] > kRemoteTimeoutMs)
+            continue;
+        RemotePlayer& player = out[written++];
+        player.netId = b.remotes[i].netId;
+        player.x = b.remotes[i].x;
+        player.y = b.remotes[i].y;
+        player.z = b.remotes[i].z;
+        player.yaw = b.remotes[i].yaw;
+    }
+    return written;
 }
 
 u32 BridgePeerCount()

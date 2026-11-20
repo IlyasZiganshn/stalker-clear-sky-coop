@@ -1,0 +1,34 @@
+diff --git a/src/xrGame/Actor.cpp b/src/xrGame/Actor.cpp
+index b456474..f7444cf 100644
+--- a/src/xrGame/Actor.cpp
++++ b/src/xrGame/Actor.cpp
+@@ -81,6 +81,8 @@
+ #include "script_hit.h"
+ //-Alundaio
+ 
++#include "coop/coop_player.h"
++
+ //const u32 patch_frames = 50;
+ //const float respawn_delay = 1.f;
+ //const float respawn_auto = 7.f;
+@@ -1095,6 +1097,8 @@ void CActor::UpdateCL()
+     inherited::UpdateCL();
+     m_pPhysics_support->in_UpdateCL();
+ 
++    coop::PublishLocalPlayer();
++
+     if (g_Alive())
+         PickupModeUpdate();
+ 
+diff --git a/src/xrGame/xrGame.vcxproj b/src/xrGame/xrGame.vcxproj
+index b3da4b6..cdec6ad 100644
+--- a/src/xrGame/xrGame.vcxproj
++++ b/src/xrGame/xrGame.vcxproj
+@@ -1554,6 +1554,7 @@
+       <PrecompiledHeaderOutputFile>$(IntDir)$(ProjectName)_script.pch</PrecompiledHeaderOutputFile>
+     </ClCompile>
+     <ClCompile Include="ActorAnimation.cpp" />
++    <ClCompile Include="coop\coop_player.cpp" />
+     <ClCompile Include="ActorCameras.cpp" />
+     <ClCompile Include="ActorCondition.cpp">
+       <PrecompiledHeaderFile>pch_script.h</PrecompiledHeaderFile>

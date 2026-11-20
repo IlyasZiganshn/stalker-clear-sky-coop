@@ -53,11 +53,17 @@ CMake и Ninja ставятся вместе с C++-нагрузкой Visual St
 Требования к движку: x64, MSVC 2022, Windows SDK 10. Проверено: сборка проходит,
 результат — `engine/src/bin/x64/Release/xrEngine.exe` (см. `engine/README.md`).
 
-## Запуск тестовой сессии (появится в M1)
+## Запуск тестовой сессии
 
-```powershell
-xrEngine.exe -coop_listen -coop_port 27015
-xrEngine.exe -coop_connect 127.0.0.1:27015
+В игре сессией управляют консольные команды (`~`):
+
+```
+coop_listen 27016            # хост: обычная одиночная игра слушает UDP
+coop_connect 192.168.1.5:27016
+coop_say текст
+coop_status
+coop_stop
 ```
 
-Флаги — контракт из `docs/ARCHITECTURE.md`; до реализации считаются несуществующими.
+Обе стороны должны быть на одном уровне. Пошаговый чек-лист проверки —
+[docs/TESTING.md](TESTING.md).

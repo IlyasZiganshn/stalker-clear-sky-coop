@@ -24,6 +24,8 @@ constexpr u32 kPublishIntervalMs = 50;
 constexpr u32 kInputIntervalMs = 16;
 constexpr u32 kWorldBroadcastMs = 1000;
 constexpr u32 kRemoteTimeoutMs = 2000;
+// Spawn blobs are repeated slowly so a reloaded level gets its dolls back.
+constexpr u32 kSpawnResendMs = 2000;
 // Input is sent at 60 Hz: half a second of silence means the stream is dead.
 constexpr u32 kInputTimeoutMs = 500;
 // Remote players are rendered this far in the past, between two 20 Hz samples.
@@ -59,6 +61,7 @@ struct Bridge
     char levelMismatchText[128] = "";
     std::vector<std::uint8_t> localSpawn;
     bool localSpawnSent = false;
+    u32 spawnResendMs = 0;
     std::vector<coopnet::Spawn> knownSpawns;
     std::vector<coopnet::Spawn> pendingSpawns;
     std::vector<u32> pendingDespawns;
@@ -80,6 +83,27 @@ Bridge& state()
 {
     static Bridge instance;
     return instance;
+}
+
+// Level-scoped state: game ids and spawn blobs die with the level, and remote
+// transforms from the old level must not leak into the new one.
+void resetLevelState(Bridge& b)
+{
+    b.local = coopnet::PlayerState{};
+    b.localPublishMs = 0;
+    b.localSpawn.clear();
+    b.localSpawnSent = false;
+    b.spawnResendMs = 0;
+    b.knownSpawns.clear();
+    b.pendingSpawns.clear();
+    b.pendingDespawns.clear();
+    b.remotePlayers.clear();
+    for (u32 i = 0; i < kMaxRemotes; ++i)
+    {
+        b.remoteInputs[i] = coop::PlayerInput{};
+        b.remoteInputMs[i] = 0;
+    }
+    b.worldSent = false;
 }
 
 void rememberChat(const coopnet::AppMessage& message)
@@ -170,6 +194,14 @@ void removeKnownSpawn(Bridge& b, u32 netId)
             return;
         }
     }
+}
+
+const coopnet::Spawn* findKnownSpawn(const Bridge& b, u32 netId)
+{
+    for (const auto& spawn : b.knownSpawns)
+        if (spawn.netId == netId)
+            return &spawn;
+    return nullptr;
 }
 
 // Game side has not seen this spawn yet: keep one copy per player.
@@ -280,14 +312,26 @@ void handleAppMessage(Bridge& b, const coopnet::Session::Delivery& delivery,
             spawn.netId = b.server->netIdOf(*from);
             if (spawn.netId == 0)
                 return;
-            removeKnownSpawn(b, spawn.netId);
-            b.knownSpawns.push_back(spawn);
+        }
+        else if (b.client && spawn.netId == b.client->netId())
+            return;
+
+        // A peer that reloaded the level publishes a fresh blob under the same
+        // net_id: the old doll belongs to the previous world and must go.
+        const coopnet::Spawn* previous = findKnownSpawn(b, spawn.netId);
+        const bool changed = previous != nullptr && previous->data != spawn.data;
+        removeKnownSpawn(b, spawn.netId);
+        b.knownSpawns.push_back(spawn);
+
+        if (b.server && from != nullptr)
+        {
             std::vector<std::uint8_t> wire;
             if (coopnet::encodeSpawn(spawn, wire))
                 b.server->broadcastExcept(*from, coopnet::Channel::Control, wire);
         }
-        else if (b.client && spawn.netId == b.client->netId())
-            return;
+
+        if (changed)
+            queueDespawn(b, spawn.netId);
         queueSpawn(b, spawn);
         return;
     }
@@ -347,17 +391,7 @@ void BridgeStop()
     b.serverClockOffsetMs = 0;
     b.levelMismatch = false;
     b.levelMismatchText[0] = 0;
-    b.localSpawn.clear();
-    b.localSpawnSent = false;
-    b.knownSpawns.clear();
-    b.pendingSpawns.clear();
-    b.pendingDespawns.clear();
-    b.remotePlayers.clear();
-    for (u32 i = 0; i < kMaxRemotes; ++i)
-    {
-        b.remoteInputs[i] = PlayerInput{};
-        b.remoteInputMs[i] = 0;
-    }
+    resetLevelState(b);
     std::snprintf(b.status, sizeof(b.status), "coop: off");
 }
 
@@ -533,15 +567,24 @@ void BridgeTick(u32 nowMs)
 
         if (b.client->state() == coopnet::PeerState::Joined)
         {
-            if (!b.localSpawnSent && !b.localSpawn.empty())
+            // The spawn is resent at a low rate: a peer that reloaded its level
+            // loses every doll, and only a fresh blob restores them.
+            const bool resendDue = b.spawnResendMs == 0 ||
+                nowMs - b.spawnResendMs >= kSpawnResendMs;
+            if (!b.localSpawn.empty() && b.client->netId() != 0 &&
+                (!b.localSpawnSent || resendDue))
             {
                 coopnet::Spawn spawn;
                 spawn.netId = b.client->netId();
                 spawn.data = b.localSpawn;
                 std::vector<std::uint8_t> wire;
-                if (spawn.netId != 0 && coopnet::encodeSpawn(spawn, wire) &&
+                if (coopnet::encodeSpawn(spawn, wire) &&
                     b.client->send(coopnet::Channel::Control, wire))
+                {
                     b.localSpawnSent = true;
+                    if (resendDue)
+                        b.spawnResendMs = nowMs;
+                }
             }
 
             if (!b.worldSent && b.hasLocalWorld)
@@ -761,6 +804,7 @@ bool BridgeSetLocalSpawn(const void* data, u32 size)
 
     b.localSpawn.assign(bytes, bytes + size);
     b.localSpawnSent = false;
+    b.spawnResendMs = 0;
 
     // A host may have peers already: the client branch below picks the blob up
     // on its own once it is joined.
@@ -815,6 +859,9 @@ void BridgeSetWorldInfo(pcstr levelName, u64 gameTimeMs)
     Bridge& b = state();
     if (levelName == nullptr || levelName[0] == 0)
         return;
+
+    if (b.hasLocalWorld && b.localWorld.levelName != levelName)
+        resetLevelState(b);
 
     b.localWorld.gameTimeMs = gameTimeMs;
     b.localWorld.levelName = levelName;

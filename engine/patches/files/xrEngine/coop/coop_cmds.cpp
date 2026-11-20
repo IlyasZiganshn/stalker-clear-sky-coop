@@ -4,6 +4,8 @@
 
 #include "XR_IOConsole.h"
 #include "xr_ioc_cmd.h"
+#include "IGame_Level.h"
+#include "xr_object.h"
 #include "xrNetServer/coop/coop_bridge.h"
 
 namespace
@@ -109,8 +111,9 @@ public:
         const u32 count = coop::BridgeRemotePlayers(remotes, 4);
         for (u32 i = 0; i < count; ++i)
         {
-            Msg("* coop: remote %u at %.1f %.1f %.1f, yaw %.2f", remotes[i].netId,
-                remotes[i].x, remotes[i].y, remotes[i].z, remotes[i].yaw);
+            Msg("* coop: remote %u at %.1f %.1f %.1f, yaw %.2f, body 0x%04x",
+                remotes[i].netId, remotes[i].x, remotes[i].y, remotes[i].z,
+                remotes[i].yaw, remotes[i].bodyState);
         }
 
         const u64 serverTime = coop::BridgeServerGameTime();
@@ -118,6 +121,41 @@ public:
             Msg("* coop: server game time %llu ms",
                 static_cast<unsigned long long>(serverTime));
     }
+};
+
+class CCC_CoopDump : public IConsole_Command
+{
+public:
+    CCC_CoopDump(pcstr name) : IConsole_Command(name) { bEmptyArgsHandled = true; }
+
+    void Execute(pcstr) override
+    {
+        if (g_pGameLevel == nullptr)
+        {
+            Msg("* coop: no level loaded");
+            return;
+        }
+
+        // Object ids of two processes are only comparable if both loaded the
+        // level the same way; the dump exists to answer that question in game.
+        CObjectList& objects = g_pGameLevel->Objects;
+        const u32 count = objects.o_count();
+        Msg("* coop: %u objects in level", count);
+        const u32 limit = count < 256 ? count : 256;
+        for (u32 i = 0; i < limit; ++i)
+        {
+            IGameObject* object = objects.o_get_by_iterator(i);
+            if (object == nullptr)
+                continue;
+            const Fvector& position = object->Position();
+            pcstr section = object->cNameSect_str();
+            Msg("* coop: obj %u %s at %.1f %.1f %.1f%s", object->ID(),
+                section ? section : "?", position.x, position.y, position.z,
+                object->Local() ? " local" : "");
+        }
+    }
+
+    void Info(TInfo& I) override { xr_strcpy(I, "lists level objects and ids"); }
 };
 
 class CCC_CoopSay : public IConsole_Command
@@ -147,4 +185,5 @@ void CCC_RegisterCoop()
     CMD1(CCC_CoopStop, "coop_stop");
     CMD1(CCC_CoopStatus, "coop_status");
     CMD1(CCC_CoopSay, "coop_say");
+    CMD1(CCC_CoopDump, "coop_dump");
 }

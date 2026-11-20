@@ -3,6 +3,7 @@
 #include "coop_player.h"
 
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 
 #include "Actor.h"
@@ -39,6 +40,10 @@ RemoteEntity g_remotes[kMaxRemoteEntities];
 bool g_localSpawnPublished = false;
 u16 g_nextRemoteId = kFirstRemoteGameId;
 u32 g_dollPublishMs = 0;
+// Level-scoped guards: dolls die with the level, and a session must not leave
+// its dolls behind when it stops.
+char g_levelName[128] = "";
+bool g_hadSession = false;
 
 u16 FindRemoteGameId(u32 netId)
 {
@@ -73,6 +78,24 @@ void ForgetRemote(u32 netId)
             return;
         }
     }
+}
+
+// Remote dolls are real level objects, so they must be removed before the
+// table is reused: a new level or a stopped session has none of them.
+void ResetRemoteEntities()
+{
+    for (auto& remote : g_remotes)
+    {
+        if (remote.netId == 0)
+            continue;
+        if (IGameObject* object = Level().Objects.net_Find(remote.gameId))
+        {
+            object->net_Destroy();
+            Level().Objects.Destroy(object);
+        }
+        remote = RemoteEntity{};
+    }
+    g_nextRemoteId = kFirstRemoteGameId;
 }
 
 // Remote dolls live in a high id range that normal level spawns do not use;
@@ -114,9 +137,16 @@ bool SpawnRemote(const SpawnInfo& info)
     if (info.netId == 0 || info.size < sizeof(u16) ||
         info.size > sizeof(NET_Packet::B.data))
         return false;
-    // A repeated spawn (late joiner, retransmit) must not create a second doll.
-    if (FindRemoteGameId(info.netId) != 0xFFFF)
-        return true;
+    // A repeated spawn (late joiner, retransmit, periodic resend) must not
+    // create a second doll — but a doll that died with a reloaded level is
+    // replaced, because the blob refers to the new world.
+    const u16 knownId = FindRemoteGameId(info.netId);
+    if (knownId != 0xFFFF)
+    {
+        if (Level().Objects.net_Find(knownId) != nullptr)
+            return true;
+        ForgetRemote(info.netId);
+    }
 
     NET_Packet packet;
     std::memcpy(packet.B.data, info.data, info.size);
@@ -375,15 +405,17 @@ void PublishDollStates(const PlayerInput* inputs, u32 inputCount)
 
 void PollRemoteEntities()
 {
-    SpawnInfo spawns[4];
-    const u32 spawnCount = BridgeTakeSpawns(spawns, 4);
-    for (u32 i = 0; i < spawnCount; ++i)
-        SpawnRemote(spawns[i]);
-
+    // Despawns go first: a replaced spawn is queued as despawn + spawn in the
+    // same tick, and the old doll must be gone before the new one is built.
     u32 gone[8];
     const u32 goneCount = BridgeTakeDespawns(gone, 8);
     for (u32 i = 0; i < goneCount; ++i)
         DespawnRemote(gone[i]);
+
+    SpawnInfo spawns[4];
+    const u32 spawnCount = BridgeTakeSpawns(spawns, 4);
+    for (u32 i = 0; i < spawnCount; ++i)
+        SpawnRemote(spawns[i]);
 
     PlayerInput inputs[kMaxRemoteEntities];
     const u32 inputCount = BridgeRemoteInputs(inputs, kMaxRemoteEntities);
@@ -427,11 +459,26 @@ void PublishLocalPlayer(CActor* actor)
     if (!BridgeActive())
     {
         g_localSpawnPublished = false;
+        if (g_hadSession)
+        {
+            g_hadSession = false;
+            ResetRemoteEntities();
+        }
         return;
     }
     // Remote dolls also run CActor::UpdateCL; only the local actor publishes.
     if (actor == nullptr || actor != g_actor || actor->getDestroy())
         return;
+
+    g_hadSession = true;
+
+    const shared_str& levelName = Level().name();
+    if (levelName.size() > 0 && xr_strcmp(g_levelName, levelName.c_str()) != 0)
+    {
+        std::snprintf(g_levelName, sizeof(g_levelName), "%s", levelName.c_str());
+        g_localSpawnPublished = false;
+        ResetRemoteEntities();
+    }
 
     if (!g_localSpawnPublished)
         g_localSpawnPublished = PublishLocalSpawn();
@@ -444,7 +491,6 @@ void PublishLocalPlayer(CActor* actor)
         static_cast<u16>(actor->MovingState() & 0x7FFF));
     PublishLocalInput(actor);
 
-    const shared_str& levelName = Level().name();
     if (levelName.size() > 0)
         BridgeSetWorldInfo(levelName.c_str(), static_cast<u64>(Level().GetGameTime()));
 }

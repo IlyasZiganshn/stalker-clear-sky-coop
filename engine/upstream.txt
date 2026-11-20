@@ -1,0 +1,5 @@
+repo=OpenXRay/xray-16
+branch=dev
+commit=d1eb5d39a81ec41a5a30383822e5706e4b13b37c
+date=2026-11-16
+note=Sources live under src/; paths in engine/README.md are relative to it.

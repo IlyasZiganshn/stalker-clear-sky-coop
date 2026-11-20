@@ -1,0 +1,36 @@
+# build
+/build/
+/out/
+CMakeUserPresets.json
+.vs/
+.vscode/
+*.user
+*.suo
+*.sln
+*.vcxproj*
+CMakeCache.txt
+CMakeFiles/
+
+# game files — never commit (см. README, правовая рамка)
+gamedata/configs/
+gamedata/meshes/
+gamedata/textures/
+gamedata/sounds/
+gamedata/spawns/
+gamedata/levels/
+gamedata/anims/
+gamedata/shaders/
+gamedata/*.db*
+gamedata/*.xdb
+*.xrpt
+logs/
+user.ltx
+
+# tooling
+/tools/_local/
+*.pdb
+*.ilk
+*.obj
+*.log
+*.trace
+*.replay

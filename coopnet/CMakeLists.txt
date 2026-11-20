@@ -26,6 +26,7 @@ add_library(coopnet STATIC
     src/actor.cpp
     src/app_message.cpp
     src/player_state.cpp
+    src/player_interp.cpp
     src/world_info.cpp
     src/spawn.cpp
 )
@@ -62,6 +63,7 @@ add_executable(coopnet_tests
     tests/test_actor.cpp
     tests/test_app_message.cpp
     tests/test_player_state.cpp
+    tests/test_player_interp.cpp
     tests/test_world_info.cpp
     tests/test_spawn.cpp
 )

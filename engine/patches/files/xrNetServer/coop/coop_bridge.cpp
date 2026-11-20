@@ -10,6 +10,7 @@
 #include "coopnet/input.h"
 #include "coopnet/net.h"
 #include "coopnet/peer.h"
+#include "coopnet/player_interp.h"
 #include "coopnet/player_state.h"
 #include "coopnet/server.h"
 #include "coopnet/spawn.h"
@@ -25,6 +26,8 @@ constexpr u32 kWorldBroadcastMs = 1000;
 constexpr u32 kRemoteTimeoutMs = 2000;
 // Input is sent at 60 Hz: half a second of silence means the stream is dead.
 constexpr u32 kInputTimeoutMs = 500;
+// Remote players are rendered this far in the past, between two 20 Hz samples.
+constexpr u32 kPlayerInterpDelayMs = 100;
 constexpr u32 kMaxRemotes = 8;
 
 struct Bridge
@@ -40,8 +43,7 @@ struct Bridge
     coopnet::PlayerState local;
     u32 localPublishMs = 0;
     u32 nowMs = 0;
-    coopnet::PlayerState remotes[kMaxRemotes];
-    u32 remoteMs[kMaxRemotes] = {};
+    coopnet::PlayerInterpolator remotePlayers;
     coop::PlayerInput remoteInputs[kMaxRemotes];
     u32 remoteInputMs[kMaxRemotes] = {};
     u32 localInputMs = 0;
@@ -92,43 +94,13 @@ void rememberChat(const coopnet::AppMessage& message)
 
 void rememberRemote(Bridge& b, const coopnet::PlayerState& state, u32 nowMs)
 {
-    for (u32 i = 0; i < kMaxRemotes; ++i)
-    {
-        if (b.remotes[i].netId == state.netId)
-        {
-            b.remotes[i] = state;
-            b.remoteMs[i] = nowMs;
-            return;
-        }
-    }
-    for (u32 i = 0; i < kMaxRemotes; ++i)
-    {
-        if (b.remotes[i].netId == 0)
-        {
-            b.remotes[i] = state;
-            b.remoteMs[i] = nowMs;
-            return;
-        }
-    }
-    // Table is full: replace the oldest sample.
-    u32 oldest = 0;
-    for (u32 i = 1; i < kMaxRemotes; ++i)
-        if (b.remoteMs[i] < b.remoteMs[oldest])
-            oldest = i;
-    b.remotes[oldest] = state;
-    b.remoteMs[oldest] = nowMs;
+    // The interpolator ignores repeats and out-of-order samples on its own.
+    b.remotePlayers.push(state, nowMs);
 }
 
 void forgetRemote(Bridge& b, u32 netId)
 {
-    for (u32 i = 0; i < kMaxRemotes; ++i)
-    {
-        if (b.remotes[i].netId == netId)
-        {
-            b.remotes[i] = coopnet::PlayerState{};
-            b.remoteMs[i] = 0;
-        }
-    }
+    b.remotePlayers.forget(netId);
 }
 
 void rememberInput(Bridge& b, const coopnet::InputState& input, u32 netId, u32 nowMs)
@@ -380,10 +352,9 @@ void BridgeStop()
     b.knownSpawns.clear();
     b.pendingSpawns.clear();
     b.pendingDespawns.clear();
+    b.remotePlayers.clear();
     for (u32 i = 0; i < kMaxRemotes; ++i)
     {
-        b.remotes[i] = coopnet::PlayerState{};
-        b.remoteMs[i] = 0;
         b.remoteInputs[i] = PlayerInput{};
         b.remoteInputMs[i] = 0;
     }
@@ -695,21 +666,19 @@ u32 BridgeRemotePlayers(RemotePlayer* out, u32 capacity)
     if (out == nullptr || capacity == 0)
         return 0;
 
-    u32 written = 0;
-    for (u32 i = 0; i < kMaxRemotes && written < capacity; ++i)
+    coopnet::PlayerState players[kMaxRemotes];
+    const u32 count = b.remotePlayers.sample(b.nowMs, kPlayerInterpDelayMs,
+        kRemoteTimeoutMs, players, kMaxRemotes);
+    for (u32 i = 0; i < count && i < capacity; ++i)
     {
-        if (b.remotes[i].netId == 0)
-            continue;
-        if (b.nowMs - b.remoteMs[i] > kRemoteTimeoutMs)
-            continue;
-        RemotePlayer& player = out[written++];
-        player.netId = b.remotes[i].netId;
-        player.x = b.remotes[i].x;
-        player.y = b.remotes[i].y;
-        player.z = b.remotes[i].z;
-        player.yaw = b.remotes[i].yaw;
+        RemotePlayer& player = out[i];
+        player.netId = players[i].netId;
+        player.x = players[i].x;
+        player.y = players[i].y;
+        player.z = players[i].z;
+        player.yaw = players[i].yaw;
     }
-    return written;
+    return count < capacity ? count : capacity;
 }
 
 void BridgePublishLocalInput(float moveX, float moveY, float yaw, float pitch,

@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "test_framework.h"
+#include "test_support.h"
 
 using namespace coopnet;
 
@@ -151,6 +152,35 @@ COOP_TEST(peer_exchanges_application_messages_after_join) {
     CHECK_EQ(toClient.size(), std::size_t{1});
     CHECK(toClient[0].channel == Channel::Events);
     CHECK(toClient[0].payload == bytesOf("hit"));
+}
+
+COOP_TEST(peer_handshake_survives_lossy_link) {
+    ClientPeer client(clientOptions(9));
+    ServerPeer server(serverOptions(9));
+    coopnet_test::Lcg rng(0xC0FFEEu);
+
+    CHECK(client.start("Strelok"));
+
+    for (std::uint32_t now = 0; now <= 10000; ++now) {
+        for (const auto& datagram : client.poll(now)) {
+            if (!rng.chance(30)) {
+                server.onDatagram(datagram.data(), datagram.size(), now);
+            }
+        }
+        for (const auto& datagram : server.poll(now)) {
+            if (!rng.chance(30)) {
+                client.onDatagram(datagram.data(), datagram.size(), now);
+            }
+        }
+        if (client.state() == PeerState::Joined &&
+            server.state() == PeerState::Joined) {
+            break;
+        }
+    }
+
+    CHECK(client.state() == PeerState::Joined);
+    CHECK(server.state() == PeerState::Joined);
+    CHECK(server.playerName() == "Strelok");
 }
 
 COOP_TEST(peer_reports_silence_after_join) {

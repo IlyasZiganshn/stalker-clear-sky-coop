@@ -123,8 +123,10 @@ std::vector<Session::Delivery> ClientPeer::takeDelivered() {
     return result;
 }
 
-ServerPeer::ServerPeer(PeerConfig config)
-    : config_(std::move(config)), session_(config_.session) {}
+ServerPeer::ServerPeer(PeerConfig config, SlotResolver resolveSlot)
+    : config_(std::move(config)),
+      session_(config_.session),
+      resolveSlot_(std::move(resolveSlot)) {}
 
 void ServerPeer::onDatagram(const std::uint8_t* data, std::size_t size,
                             std::uint32_t nowMs) {
@@ -185,12 +187,16 @@ void ServerPeer::handleControl(Session::Delivery delivery) {
                 ++protocolViolations_;
                 return;
             }
-            if (join.slot >= config_.maxPlayers) {
+            std::uint8_t assigned = join.slot;
+            const bool slotOk = resolveSlot_
+                                    ? resolveSlot_(join.slot, assigned)
+                                    : join.slot < config_.maxPlayers;
+            if (!slotOk) {
                 deny(JoinDenyReason::ServerFull);
                 return;
             }
 
-            slot_ = join.slot;
+            slot_ = assigned;
             ServerJoinOk ok;
             ok.netId = static_cast<std::uint32_t>(1000u + slot_);
             netId_ = ok.netId;

@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -77,7 +78,12 @@ private:
 // caller: one ServerPeer handles one connected client.
 class ServerPeer {
 public:
-    explicit ServerPeer(PeerConfig config = {});
+    // `requested` is C_JOIN.slot (0xFF means "any free slot"); fills `assigned`.
+    // Without a resolver the requested slot is accepted when it is in range.
+    using SlotResolver =
+        std::function<bool(std::uint8_t requested, std::uint8_t& assigned)>;
+
+    explicit ServerPeer(PeerConfig config = {}, SlotResolver resolveSlot = {});
 
     void onDatagram(const std::uint8_t* data, std::size_t size,
                     std::uint32_t nowMs);
@@ -103,6 +109,7 @@ private:
 
     PeerConfig config_;
     Session session_;
+    SlotResolver resolveSlot_;
     PeerState state_ = PeerState::Idle;
     std::string playerName_;
     std::uint8_t slot_ = 0;

@@ -15,6 +15,12 @@ struct Endpoint {
     std::string toString() const;
 
     bool operator==(const Endpoint&) const = default;
+    bool operator<(const Endpoint& other) const {
+        if (address != other.address) {
+            return address < other.address;
+        }
+        return port < other.port;
+    }
 };
 
 // Winsock init/teardown on Windows, no-op elsewhere. Create one before opening

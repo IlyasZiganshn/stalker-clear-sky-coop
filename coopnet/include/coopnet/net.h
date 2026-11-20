@@ -14,6 +14,10 @@ struct Endpoint {
     static Endpoint loopback(std::uint16_t port = 0);
     std::string toString() const;
 
+    // Numeric IPv4 only ("127.0.0.1"); no DNS. Returns false on bad input.
+    static bool parse(const std::string& host, std::uint16_t port,
+                      Endpoint& out);
+
     bool operator==(const Endpoint&) const = default;
     bool operator<(const Endpoint& other) const {
         if (address != other.address) {

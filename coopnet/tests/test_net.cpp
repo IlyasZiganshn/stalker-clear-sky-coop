@@ -73,6 +73,16 @@ COOP_TEST(net_endpoint_formatting) {
     CHECK(Endpoint::loopback(27015) == endpoint);
 }
 
+COOP_TEST(net_endpoint_parsing) {
+    Endpoint endpoint;
+    CHECK(Endpoint::parse("192.168.0.10", 27015, endpoint));
+    CHECK(endpoint.toString() == "192.168.0.10:27015");
+
+    CHECK(!Endpoint::parse("localhost", 27015, endpoint));
+    CHECK(!Endpoint::parse("192.168.0.300", 27015, endpoint));
+    CHECK(!Endpoint::parse("", 27015, endpoint));
+}
+
 COOP_TEST(net_move_transfers_the_socket) {
     NetworkScope scope;
     UdpSocket first;

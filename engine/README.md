@@ -24,6 +24,7 @@
 
 ```powershell
 ./engine/fetch.ps1                 # клон фиксированного коммита + сабмодули в engine/src
+./engine/apply.ps1                 # копирование coopnet и наших патчей в engine/src
 ./engine/build.ps1                 # nuget restore + msbuild (Release x64 по умолчанию)
 ./engine/build.ps1 -Configuration Debug -Platform x86
 ```
@@ -32,23 +33,49 @@
 истории мода. `fetch.ps1` проверяет, что HEAD совпадает с `engine/upstream.txt`,
 и не продолжает при расхождении.
 
-Наши патчи из `engine/patches/` применяются поверх (скрипт появится вместе с первым
-патчем): проверка коммита, лексикографический порядок, копирование файлов из
-`patches/files/`, отчёт о конфликтах. Автоматический `git am` без проверки коммита
-запрещён — иначе получаем «почти собралось» и сутки отладки.
+`apply.ps1` проверяет тот же коммит, копирует `engine/patches/files/` в дерево,
+кладёт `coopnet/` в `src/xrNetServer/coopnet/` и применяет `engine/patches/*.patch`
+в лексикографическом порядке. Уже применённый патч распознаётся и пропускается;
+конфликт останавливает скрипт с выводом `git apply`. Автоматический `git am` без
+проверки коммита запрещён — иначе получаем «почти собралось» и сутки отладки.
 
 ## Точки интеграции
 
-Ориентиры для M1, уточняются по коду:
+Проверено по коду на коммите `d1eb5d3`:
 
-- `src/xrEngine/xrLevel.cpp`, `src/xrEngine/client.cpp`, `src/xrEngine/server.cpp` —
-  исходный мультиплеерный слой X-Ray (`NET_Packet`, приём пакетов).
-- `src/xrGame/Level*.cpp` — спавн/деспавн сущностей, `net_id`-таблица.
-- `src/xrGame/actor.cpp`, `src/xrGame/entity_alive.cpp` — персонаж и его состояние.
-- `src/xrGame/alife_*` — симуляция мира (`alife()`), сохранения, переходы.
-- `src/xrScripts/` — экспорт Lua; точка подключения скриптового RPC-слоя.
+- Windows-сборка (`engine.sln` → MSBuild) компилирует `src/xrNetServer/NET_Client.cpp`
+  и `NET_Server.cpp`: там DirectPlay 8 (`IDirectPlay8Client`/`IDirectPlay8Server`).
+  `src/xrNetServer/empty/` — заглушки того же интерфейса для CMake-сборки; интерфейсы
+  классов общие, реализация транспорта различается.
+- Клиент: `CLevel : IPureClient` (`src/xrGame/Level.cpp`); вход —
+  `CLevel::Connect2Server(options)` (`Level_network.cpp`); исходящие пакеты —
+  `IPureClient::Send(NET_Packet&)`, входящие — `IPureClient::OnMessage` →
+  `CLevel::OnMessage` (`Level_network_messages.cpp`). `NET_Packet` — просто буфер,
+  поэтому транспорт можно заменить, не трогая игровой слой.
+- Сервер: `xrServer : IPureServer` (`src/xrGame/xrServer.cpp`), `OnMessage`,
+  `SendTo`/`SendBroadcast` — сюда встаёт наш транспорт вместо DirectPlay.
+- Консольные команды регистрируются в `src/xrEngine/xr_ioc_cmd.cpp` (`CCC_Register`,
+  макросы `CMD1..CMD4`); кадровый тик — `CRenderDevice::FrameMove`
+  (`src/xrEngine/device.cpp`), время — `dwTimeContinual` (мс).
+- Спавн/деспавн сущностей и `net_id` — `src/xrGame/Level_network_spawn.cpp`,
+  `xrServer_Objects*.cpp`; это следующий слой после транспорта.
 
-Статус проверки: не проверено, это карта для спайка, а не факты.
+## Патч 0001 — coopnet в сборке движка
+
+- `engine/patches/files/xrNetServer/coop/` — мост `coop::Bridge*`, экспортируется из
+  `xrNetServer.dll`: сессии на игровом потоке, без своего потока и таймеров.
+- `engine/patches/files/xrEngine/coop/coop_cmds.cpp` — команды `coop_listen [port]`,
+  `coop_connect host[:port]`, `coop_stop`, `coop_status`.
+- `engine/patches/0001-coopnet-in-engine.patch` — `xrNetServer.vcxproj` компилирует
+  `coopnet/src/*.cpp` (include `coopnet/include`), `xrEngine.vcxproj` — команды,
+  `CCC_Register` их регистрирует, `FrameMove` тикает мост.
+- `engine/apply.ps1` копирует файлы и `coopnet/` в дерево и применяет патчи; повторный
+  запуск пропускает уже применённое.
+
+Проверено 2026-11-20: `apply.ps1` + `build.ps1` дают `xrEngine.exe`;
+`dumpbin /exports xrNetServer.dll` показывает `coop::BridgeTick`, `BridgeStartServer`,
+`BridgeStartClient`, `BridgeStop`, `BridgeStatus`, `BridgeActive`, `BridgePeerCount`.
+В игре не проверялось — нужна легальная копия Clear Sky 1.5.10.
 
 ## Сборка
 

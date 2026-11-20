@@ -38,9 +38,12 @@
 handshake, сокеты, несколько клиентов в `NetServer`, сквозное демо `coopnet_echo`,
 измерение RTT, счётчики трафика, буфер интерполяции и история ввода для
 предсказания, дельта-снапшоты, демо репликации `coopnet_snap`.
-Форк OpenXRay получен (`engine/fetch.ps1`) и собирается (`engine/build.ps1`):
-`xrEngine.exe` Release x64. Осталось: интеграция транспорта в движок, спавн второго
-персонажа в мире, репликация позиции, prediction/reconciliation, спайк headless.
+Форк OpenXRay получен (`engine/fetch.ps1`), патчится (`engine/apply.ps1`) и
+собирается (`engine/build.ps1`): `xrEngine.exe` Release x64. `coopnet` компилируется
+внутрь `xrNetServer.dll`, мост `coop::Bridge*` тикает из `CRenderDevice::FrameMove`,
+в консоли есть `coop_listen` / `coop_connect` / `coop_stop` / `coop_status`.
+Осталось: спавн второго персонажа в мире, репликация позиции, prediction/reconciliation,
+спайк headless. Игровая проверка — после появления легальной копии игры.
 
 Оценка: 6–10 недель. Риск: headless может потребовать развязки кадрового цикла.
 

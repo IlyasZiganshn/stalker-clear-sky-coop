@@ -1,0 +1,70 @@
+﻿diff --git a/src/xrEngine/device.cpp b/src/xrEngine/device.cpp
+index 01a427c..74bb9aa 100644
+--- a/src/xrEngine/device.cpp
++++ b/src/xrEngine/device.cpp
+@@ -11,6 +11,8 @@
+ #include "IGame_Level.h"
+ #include "IGame_Persistent.h"
+ 
++#include "xrNetServer/coop/coop_bridge.h"
++
+ #include "xrScriptEngine/script_space.hpp"
+ 
+ #include <SDL.h>
+@@ -437,6 +439,7 @@ void CRenderDevice::FrameMove()
+     dwFrame++;
+     Core.dwFrame = dwFrame;
+     dwTimeContinual = TimerMM.GetElapsed_ms() - app_inactive_time;
++    coop::BridgeTick(dwTimeContinual);
+ 
+     fTimeDeltaReal = Timer.GetElapsed_sec();
+     if (!_valid(fTimeDeltaReal))
+diff --git a/src/xrEngine/xrEngine.vcxproj b/src/xrEngine/xrEngine.vcxproj
+index f6b0554..3f9baa7 100644
+--- a/src/xrEngine/xrEngine.vcxproj
++++ b/src/xrEngine/xrEngine.vcxproj
+@@ -114,6 +114,7 @@
+   </ItemGroup>
+   <ItemGroup>
+     <ClCompile Include="CameraBase.cpp" />
++    <ClCompile Include="coop\coop_cmds.cpp" />
+     <ClCompile Include="CameraManager.cpp" />
+     <ClCompile Include="cf_dynamic_mesh.cpp" />
+     <ClCompile Include="CustomHUD.cpp" />
+diff --git a/src/xrEngine/xr_ioc_cmd.cpp b/src/xrEngine/xr_ioc_cmd.cpp
+index f8520bc..64ed45e 100644
+--- a/src/xrEngine/xr_ioc_cmd.cpp
++++ b/src/xrEngine/xr_ioc_cmd.cpp
+@@ -884,4 +884,7 @@ void CCC_Register()
+ 
+     extern int ps_disable_lens_flare;
+     CMD4(CCC_Integer, "disable_lens_flare", &ps_disable_lens_flare, 0, 1);
++
++    extern void CCC_RegisterCoop();
++    CCC_RegisterCoop();
+ };
+diff --git a/src/xrNetServer/xrNetServer.vcxproj b/src/xrNetServer/xrNetServer.vcxproj
+index db96223..e0eb17a 100644
+--- a/src/xrNetServer/xrNetServer.vcxproj
++++ b/src/xrNetServer/xrNetServer.vcxproj
+@@ -21,6 +21,7 @@
+   <ItemDefinitionGroup>
+     <ClCompile>
+       <PreprocessorDefinitions>XR_NETSERVER_EXPORTS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
++      <AdditionalIncludeDirectories>$(ProjectDir)coopnet\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+     </ClCompile>
+     <Link>
+       <AdditionalDependencies>Ws2_32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+@@ -37,6 +38,12 @@
+     <ClCompile Include="NET_Compressor.cpp" />
+     <ClCompile Include="NET_Log.cpp" />
+     <ClCompile Include="NET_Server.cpp" />
++    <ClCompile Include="coop\coop_bridge.cpp">
++      <PrecompiledHeader>NotUsing</PrecompiledHeader>
++    </ClCompile>
++    <ClCompile Include="coopnet\src\*.cpp">
++      <PrecompiledHeader>NotUsing</PrecompiledHeader>
++    </ClCompile>
+     <ClCompile Include="stdafx.cpp">
+       <PrecompiledHeader>Create</PrecompiledHeader>
+     </ClCompile>

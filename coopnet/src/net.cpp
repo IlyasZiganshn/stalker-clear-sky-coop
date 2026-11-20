@@ -5,7 +5,9 @@
 
 #if defined(_WIN32)
 #include <winsock2.h>
+#include <ws2tcpip.h>
 #else
+#include <arpa/inet.h>
 #include <cerrno>
 #include <fcntl.h>
 #include <netinet/in.h>
@@ -46,6 +48,17 @@ Endpoint Endpoint::loopback(std::uint16_t port) {
     endpoint.address = 0x7F000001u;
     endpoint.port = port;
     return endpoint;
+}
+
+bool Endpoint::parse(const std::string& host, std::uint16_t port,
+                     Endpoint& out) {
+    in_addr address{};
+    if (::inet_pton(AF_INET, host.c_str(), &address) != 1) {
+        return false;
+    }
+    out.address = ntohl(address.s_addr);
+    out.port = port;
+    return true;
 }
 
 std::string Endpoint::toString() const {

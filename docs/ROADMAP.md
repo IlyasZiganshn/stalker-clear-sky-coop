@@ -38,6 +38,9 @@
 handshake, сокеты, несколько клиентов в `NetServer`, сквозное демо `coopnet_echo`,
 измерение RTT, счётчики трафика, буфер интерполяции и история ввода для
 предсказания, дельта-снапшоты, демо репликации `coopnet_snap`.
+Interest management (радиус 150 м, keep-radius 165 м) и `ClientReplicator` на
+каждого клиента: в режиме `two` два игрока получают разные слоты и разные наборы
+видимых сущностей, дельты строятся от собственной базы клиента.
 Форк OpenXRay получен (`engine/fetch.ps1`), патчится (`engine/apply.ps1`) и
 собирается (`engine/build.ps1`): `xrEngine.exe` Release x64. `coopnet` компилируется
 внутрь `xrNetServer.dll`, мост `coop::Bridge*` тикает из `CRenderDevice::FrameMove`,

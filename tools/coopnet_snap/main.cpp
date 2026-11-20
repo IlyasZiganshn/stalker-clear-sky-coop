@@ -18,9 +18,9 @@
 #include "coopnet/input.h"
 #include "coopnet/net.h"
 #include "coopnet/peer.h"
+#include "coopnet/replicator.h"
 #include "coopnet/server.h"
 #include "coopnet/snapshot.h"
-#include "coopnet/snapshot_sender.h"
 #include "coopnet/snapshot_store.h"
 
 namespace {
@@ -42,11 +42,12 @@ std::uint32_t elapsedMs(std::chrono::steady_clock::time_point started) {
             .count());
 }
 
-coopnet::PeerConfig peerConfig() {
+coopnet::PeerConfig peerConfig(std::uint8_t slot = 0) {
     coopnet::PeerConfig config;
     config.buildHash = kBuildHash;
     config.sessionToken = 0x5EED0002u;
     config.maxPlayers = 4;
+    config.slot = slot;
     return config;
 }
 
@@ -92,7 +93,8 @@ bool encodeSnapshot(const coopnet::SnapshotCodec& codec,
 
 }  // namespace
 
-int serve(coopnet::UdpSocket& socket, std::atomic<bool>* stop = nullptr) {
+int serve(coopnet::UdpSocket& socket, std::atomic<bool>* stop = nullptr,
+          coopnet::InterestConfig interest = {}) {
     std::printf("snap server: listening on port %u\n", socket.localPort());
     std::fflush(stdout);
 
@@ -102,9 +104,13 @@ int serve(coopnet::UdpSocket& socket, std::atomic<bool>* stop = nullptr) {
     const coopnet::SnapshotCodec codec = makeCodec();
 
     struct ClientState {
-        coopnet::SnapshotSender sender;
+        explicit ClientState(coopnet::InterestConfig config)
+            : replicator(config) {}
+
+        coopnet::ClientReplicator replicator;
         std::uint32_t sentTick = 0;
         std::uint32_t ackedTick = 0;
+        std::uint32_t actorNetId = 0;
     };
     std::map<coopnet::Endpoint, ClientState> clients;
 
@@ -146,7 +152,16 @@ int serve(coopnet::UdpSocket& socket, std::atomic<bool>* stop = nullptr) {
                                       delivered.delivery.payload.size(), input)) {
                 continue;
             }
-            clients[delivered.from].ackedTick = input.ackSnapshot;
+            auto it = clients.find(delivered.from);
+            if (it == clients.end()) {
+                // The first joined client drives actor 1000, the second 1031;
+                // both are far apart, so their interest sets differ.
+                const std::uint32_t actorNetId =
+                    clients.empty() ? 1000 : 1031;
+                it = clients.try_emplace(delivered.from, interest).first;
+                it->second.actorNetId = actorNetId;
+            }
+            it->second.ackedTick = input.ackSnapshot;
         }
 
         if (now >= nextSnapshotMs && now <= kServerIdleTimeoutMs) {
@@ -160,7 +175,17 @@ int serve(coopnet::UdpSocket& socket, std::atomic<bool>* stop = nullptr) {
                     client.ackedTick == 0 ||
                     tick - client.ackedTick > kMaxAckLagTicks;
                 const std::uint32_t base = lagging ? 0 : client.sentTick;
-                const coopnet::Snapshot message = client.sender.next(world, base);
+
+                coopnet::Vec3 viewer{};
+                for (const auto& entity : world.entities) {
+                    if (entity.netId == client.actorNetId) {
+                        viewer = entity.position;
+                        break;
+                    }
+                }
+
+                const coopnet::Snapshot message =
+                    client.replicator.next(world, viewer, base);
 
                 std::vector<std::uint8_t> datagram;
                 if (!encodeSnapshot(codec, message, datagram)) {
@@ -187,15 +212,17 @@ int serve(coopnet::UdpSocket& socket, std::atomic<bool>* stop = nullptr) {
     }
 }
 
-int runClient(std::uint16_t port, std::uint32_t runMs) {
+int runClient(std::uint16_t port, std::uint32_t runMs,
+              bool expectAllEntities = true, const char* tag = "snap client",
+              std::uint8_t slot = 0) {
     coopnet::UdpSocket socket;
     if (!socket.open()) {
-        std::printf("snap client: cannot open socket\n");
+        std::printf("%s: cannot open socket\n", tag);
         return 1;
     }
-    coopnet::ClientPeer peer(peerConfig());
+    coopnet::ClientPeer peer(peerConfig(slot));
     if (!peer.start("snap-client")) {
-        std::printf("snap client: cannot start handshake\n");
+        std::printf("%s: cannot start handshake\n", tag);
         return 1;
     }
 
@@ -234,7 +261,8 @@ int runClient(std::uint16_t port, std::uint32_t runMs) {
         }
 
         if (peer.state() == coopnet::PeerState::Denied) {
-            std::printf("snap client: denied\n");
+            std::printf("%s: denied (reason %u)\n", tag,
+                        static_cast<unsigned>(peer.denyReason()));
             break;
         }
 
@@ -273,16 +301,18 @@ int runClient(std::uint16_t port, std::uint32_t runMs) {
 
     const auto& stats = peer.session().stats();
     std::printf(
-        "snap client: applied %zu snapshots (%zu full, %zu delta), entities "
+        "%s: applied %zu snapshots (%zu full, %zu delta), entities "
         "%zu, rejected %zu, rtt %u ms, tx %llu B, rx %llu B\n",
-        applied, full, deltas, store.size(), rejected,
+        tag, applied, full, deltas, store.size(), rejected,
         peer.session().rttMs(),
         static_cast<unsigned long long>(stats.sentBytes),
         static_cast<unsigned long long>(stats.receivedBytes));
     std::fflush(stdout);
 
-    if (applied > 0 && deltas > 0 && rejected <= 2 &&
-        store.size() == kEntityCount) {
+    const bool entitiesOk = expectAllEntities
+        ? store.size() == kEntityCount
+        : store.size() > 0 && store.size() < kEntityCount;
+    if (applied > 0 && deltas > 0 && rejected <= 2 && entitiesOk) {
         result = 0;
     }
     return result;
@@ -311,6 +341,46 @@ int runLocal(std::uint32_t runMs) {
     }
     std::printf("coopnet_snap: FAILED (client %d, server %d)\n", clientResult,
                 serverResult);
+    return 1;
+}
+
+int runTwo(std::uint32_t runMs) {
+    coopnet::UdpSocket socket;
+    if (!socket.open()) {
+        std::printf("snap: cannot open server socket\n");
+        return 1;
+    }
+
+    // Clients drive actors 1000 and 1031; 70 m radius keeps their views apart.
+    const coopnet::InterestConfig interest{70.0f, 85.0f};
+    std::atomic<bool> stop{false};
+    int serverResult = 1;
+    std::thread serverThread([&socket, &stop, &serverResult, interest] {
+        serverResult = serve(socket, &stop, interest);
+    });
+
+    int firstResult = 1;
+    int secondResult = 1;
+    std::thread firstThread([&socket, &firstResult, runMs] {
+        firstResult = runClient(socket.localPort(), runMs, false,
+                                "snap client 1", 0xFF);
+    });
+    std::thread secondThread([&socket, &secondResult, runMs] {
+        secondResult = runClient(socket.localPort(), runMs, false,
+                                 "snap client 2", 0xFF);
+    });
+
+    firstThread.join();
+    secondThread.join();
+    stop.store(true);
+    serverThread.join();
+
+    if (firstResult == 0 && secondResult == 0 && serverResult == 0) {
+        std::printf("coopnet_snap: PASSED (two clients)\n");
+        return 0;
+    }
+    std::printf("coopnet_snap: FAILED (client 1 %d, client 2 %d, server %d)\n",
+                firstResult, secondResult, serverResult);
     return 1;
 }
 
@@ -358,6 +428,7 @@ int main(int argc, char** argv) {
         std::printf(
             "usage:\n"
             "  coopnet_snap local [ms]\n"
+            "  coopnet_snap two [ms]\n"
             "  coopnet_snap server [port]\n"
             "  coopnet_snap client <port> [ms]\n");
         return 2;
@@ -371,6 +442,14 @@ int main(int argc, char** argv) {
             return 2;
         }
         return runLocal(runMs);
+    }
+    if (mode == "two") {
+        std::uint32_t runMs = kDefaultRunMs;
+        if (argc > 2 && !parseMs(argv[2], runMs)) {
+            std::printf("coopnet_snap: bad duration\n");
+            return 2;
+        }
+        return runTwo(runMs);
     }
     if (mode == "server") {
         std::uint16_t port = kDefaultPort;

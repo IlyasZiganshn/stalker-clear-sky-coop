@@ -77,7 +77,8 @@ struct PlayerInput
 // No-op on the host: its own actor is driven by local input already.
 XRNETSERVER_API void BridgePublishLocalInput(float moveX, float moveY, float yaw,
     float pitch, u16 buttons, u8 weaponSlot);
-// Copies the latest input of every remote player (stale after 2 s).
+// Copies the latest input of every remote player (stale after 0.5 s: the owner
+// sends at 60 Hz, so half a second of silence means the stream is dead).
 XRNETSERVER_API u32 BridgeRemoteInputs(PlayerInput* out, u32 capacity);
 
 // Host only: broadcasts the transform and movement bits of a doll simulated

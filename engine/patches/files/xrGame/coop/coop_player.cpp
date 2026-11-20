@@ -217,9 +217,9 @@ void DespawnRemote(u32 netId)
     Msg("* coop: remote player %u removed (game id %u)", netId, gameId);
 }
 
-// Snaps remote dolls to the last transform heard from the authority. There is
-// no interpolation here yet: the bridge already rate-limits samples to 20 Hz.
-// Dolls fed by input are simulated locally instead and are skipped.
+// Snaps remote dolls to the transform the bridge interpolated for this frame:
+// 20 Hz samples, rendered 100 ms in the past. Dolls fed by input are simulated
+// locally instead and are skipped.
 void ApplyRemoteTransforms(const PlayerInput* inputs, u32 inputCount)
 {
     RemotePlayer players[kMaxRemoteEntities];

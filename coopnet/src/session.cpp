@@ -86,13 +86,13 @@ void Session::onDatagram(const std::uint8_t* data, std::size_t size,
         // Pure acknowledgement: never acknowledge an acknowledgement, or two
         // peers ping-pong ack-only datagrams forever.
         if (channelState.reliable) {
-            channelState.sender.onAck(header.ack, header.ackBits);
+            channelState.sender.onAck(header.ack, header.ackBits, nowMs);
         }
         return;
     }
 
     if (channelState.reliable) {
-        channelState.sender.onAck(header.ack, header.ackBits);
+        channelState.sender.onAck(header.ack, header.ackBits, nowMs);
     } else {
         channelState.ack.record(header.sequence);
     }
@@ -272,6 +272,17 @@ std::size_t Session::inFlight(Channel channel) const {
 
 std::size_t Session::outboxSize(Channel channel) const {
     return state(channel).outbox.size();
+}
+
+std::uint32_t Session::rttMs() const {
+    std::uint32_t best = 0;
+    for (const auto& channelState : channels_) {
+        if (!channelState.reliable) {
+            continue;
+        }
+        best = std::max(best, channelState.sender.smoothedRttMs());
+    }
+    return best;
 }
 
 }  // namespace coopnet

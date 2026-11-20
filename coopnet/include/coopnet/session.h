@@ -56,6 +56,10 @@ public:
     std::size_t inFlight(Channel channel) const;
     std::size_t outboxSize(Channel channel) const;
 
+    // Smoothed round-trip estimate across reliable channels; 0 until a
+    // measurement exists.
+    std::uint32_t rttMs() const;
+
     // True once any valid datagram has been accepted.
     bool hasReceived() const { return hasReceived_; }
 

@@ -38,7 +38,10 @@ public:
     bool send(std::vector<std::uint8_t> payload, std::uint32_t nowMs,
               std::uint16_t& outSequence, std::uint8_t flags = 0);
 
-    void onAck(std::uint16_t ack, std::uint32_t ackBits);
+    // `nowMs` feeds the RTT estimate; the sender works without it, just
+    // without measurements.
+    void onAck(std::uint16_t ack, std::uint32_t ackBits,
+               std::uint32_t nowMs = 0);
 
     // Messages to (re)transmit at `nowMs`; also advances retransmit timers.
     std::vector<OutgoingMessage> collect(std::uint32_t nowMs);
@@ -46,17 +49,24 @@ public:
     std::size_t pending() const { return queue_.size(); }
     std::uint16_t nextSequence() const { return nextSequence_; }
 
+    // Measured across acknowledgements; 0 until the first usable sample.
+    std::uint32_t lastRttMs() const { return lastRttMs_; }
+    std::uint32_t smoothedRttMs() const { return smoothedRttMs_; }
+
 private:
     struct Entry {
         std::uint16_t sequence = 0;
         std::uint8_t flags = 0;
         std::vector<std::uint8_t> payload;
+        std::uint32_t firstSendMs = 0;
         std::uint32_t nextSendMs = 0;
         std::uint32_t intervalMs = kInitialRtoMs;
     };
 
     std::vector<Entry> queue_;
     std::uint16_t nextSequence_ = 0;
+    std::uint32_t lastRttMs_ = 0;
+    std::uint32_t smoothedRttMs_ = 0;
 };
 
 // Reliable ordered receiver: buffers out-of-order packets, drops duplicates.

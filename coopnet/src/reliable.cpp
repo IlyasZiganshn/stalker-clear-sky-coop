@@ -21,6 +21,7 @@ bool ReliableSender::send(std::vector<std::uint8_t> payload, std::uint32_t nowMs
     entry.sequence = nextSequence_++;
     entry.flags = flags;
     entry.payload = std::move(payload);
+    entry.firstSendMs = nowMs;
     entry.nextSendMs = nowMs;
     entry.intervalMs = kInitialRtoMs;
     outSequence = entry.sequence;
@@ -28,12 +29,21 @@ bool ReliableSender::send(std::vector<std::uint8_t> payload, std::uint32_t nowMs
     return true;
 }
 
-void ReliableSender::onAck(std::uint16_t ack, std::uint32_t ackBits) {
+void ReliableSender::onAck(std::uint16_t ack, std::uint32_t ackBits,
+                           std::uint32_t nowMs) {
     for (auto it = queue_.begin(); it != queue_.end();) {
         const std::uint16_t distance = static_cast<std::uint16_t>(ack - it->sequence);
         bool acked = false;
         if (distance == 0) {
             acked = true;
+            // The newest confirmed message gives the freshest round trip; a
+            // retransmitted one inflates the sample, an old one understates it.
+            if (nowMs >= it->firstSendMs) {
+                lastRttMs_ = nowMs - it->firstSendMs;
+                smoothedRttMs_ = smoothedRttMs_ == 0
+                                     ? lastRttMs_
+                                     : (smoothedRttMs_ * 7 + lastRttMs_) / 8;
+            }
         } else if (distance <= 32) {
             acked = ((ackBits >> (distance - 1)) & 1u) != 0;
         }

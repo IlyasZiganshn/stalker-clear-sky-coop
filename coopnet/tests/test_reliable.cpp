@@ -101,6 +101,29 @@ COOP_TEST(reliable_sender_retransmits_flags_with_the_message) {
     CHECK_EQ(again[0].flags, std::uint8_t{0x80});
 }
 
+COOP_TEST(reliable_sender_measures_round_trip) {
+    ReliableSender sender;
+    std::uint16_t seq = 0;
+    CHECK_EQ(sender.smoothedRttMs(), 0u);
+
+    CHECK(sender.send(payloadOf(1), 0, seq));
+    CHECK(sender.send(payloadOf(2), 5, seq));
+
+    // Only the newest acknowledged sequence gives a usable sample.
+    sender.onAck(0, 0u, 100);
+    CHECK_EQ(sender.lastRttMs(), 100u);
+    CHECK_EQ(sender.smoothedRttMs(), 100u);
+
+    sender.onAck(1, 0u, 155);
+    CHECK_EQ(sender.lastRttMs(), 150u);
+    CHECK_EQ(sender.smoothedRttMs(), (100u * 7 + 150u) / 8);
+
+    // Without a timestamp the sender works as before, it just doesn't measure.
+    CHECK(sender.send(payloadOf(3), 200, seq));
+    sender.onAck(2, 0u);
+    CHECK_EQ(sender.lastRttMs(), 150u);
+}
+
 COOP_TEST(reliable_receiver_delivers_in_order) {
     ReliableReceiver receiver;
     CHECK(receiver.onPacket(0, 0, payloadOf(10)).size() == 1);

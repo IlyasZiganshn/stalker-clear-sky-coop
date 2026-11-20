@@ -145,6 +145,24 @@ COOP_TEST(session_ack_only_stops_retransmission) {
     CHECK(server.poll(11).empty());
 }
 
+COOP_TEST(session_measures_round_trip) {
+    Session client;
+    Session server;
+    CHECK_EQ(client.rttMs(), 0u);
+
+    CHECK(client.send(Channel::Control, bytesOf("ping")));
+    pump(client, server, 0);
+    CHECK_EQ(server.takeDelivered().size(), std::size_t{1});
+
+    // The server answers at 10 ms; the client sees its acknowledgement and
+    // derives the round trip from it.
+    for (const auto& datagram : server.poll(10)) {
+        client.onDatagram(datagram.data(), datagram.size(), 10);
+    }
+    CHECK_EQ(client.inFlight(Channel::Control), std::size_t{0});
+    CHECK_EQ(client.rttMs(), 10u);
+}
+
 COOP_TEST(session_survives_lossy_bidirectional_link) {
     Session client;
     Session server;

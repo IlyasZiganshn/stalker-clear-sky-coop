@@ -134,6 +134,29 @@ COOP_TEST(predictor_reconcile_replays_pending_inputs) {
                1e-4f);
 }
 
+COOP_TEST(predictor_keeps_pending_inputs_when_ack_repeats) {
+    const coopnet::MovementConfig config;
+    coopnet::ClientPredictor predictor(config, kDt);
+    for (std::uint32_t tick = 1; tick <= 3; ++tick) {
+        predictor.predict(forwardInput(tick));
+    }
+
+    coopnet::MoveState server;
+    coopnet::stepMovement(server, forwardInput(1), config, kDt);
+    coopnet::stepMovement(server, forwardInput(2), config, kDt);
+
+    predictor.reconcile(server, 2);
+    CHECK_EQ(predictor.pendingInputs(), std::size_t{1});
+    const float predictedZ = predictor.state().position.z;
+
+    // The same ack arrives again (a snapshot built between two inputs): there
+    // is nothing to acknowledge, but the pending input must still be replayed.
+    const float error = predictor.reconcile(server, 2);
+    CHECK_NEAR(error, 0.0f, 1e-5f);
+    CHECK_EQ(predictor.pendingInputs(), std::size_t{1});
+    CHECK_NEAR(predictor.state().position.z, predictedZ, 1e-6);
+}
+
 COOP_TEST(predictor_snaps_without_replay_on_unknown_ack) {
     coopnet::ClientPredictor predictor(coopnet::MovementConfig{}, kDt);
     for (std::uint32_t tick = 1; tick <= 3; ++tick) {

@@ -40,6 +40,7 @@ constexpr std::uint32_t kBuildHash = 0xC0FFEEu;
 constexpr std::uint16_t kDefaultPort = 27017;
 constexpr std::uint32_t kSnapshotIntervalMs = 50;  // 20 Hz
 constexpr std::uint32_t kInputIntervalMs = 16;     // ~60 Hz
+constexpr std::size_t kInputRedundancy = 8;        // ~130 ms of resent ticks
 constexpr std::uint32_t kMaxAckLagTicks = 20;
 constexpr std::uint32_t kDefaultRunMs = 3000;
 constexpr std::uint32_t kServerIdleTimeoutMs = 60000;
@@ -232,7 +233,7 @@ int runLocal(std::uint32_t ticks) {
 
 namespace {
 
-int serveMoving(coopnet::UdpSocket& socket, std::atomic<bool>* stop) {
+int serveMoving(coopnet::UdpSocket& socket, std::atomic<bool>* stop = nullptr) {
     std::printf("move server: listening on port %u\n", socket.localPort());
     std::fflush(stdout);
 
@@ -297,7 +298,14 @@ int serveMoving(coopnet::UdpSocket& socket, std::atomic<bool>* stop) {
             }
             auto actor = actors.find(client.actorNetId);
             if (actor != actors.end()) {
+                const std::uint32_t prevLast = actor->second.lastInputTick();
                 actor->second.applyInput(input, kDt);
+                if (actor->second.lastInputTick() > prevLast + 1) {
+                    std::printf(
+                        "move server: input gap skipped %u -> %u\n",
+                        prevLast, actor->second.lastInputTick());
+                    std::fflush(stdout);
+                }
             }
             if (input.ackSnapshot > client.ackedTick) {
                 client.ackedTick = input.ackSnapshot;
@@ -427,11 +435,12 @@ int runMovingClient(std::uint16_t port, std::uint32_t runMs,
                 makeMoveInput(++localTick, store.tick());
             predictor.predict(input);
             recent.push_back(input);
-            while (recent.size() > 3) {
+            while (recent.size() > kInputRedundancy) {
                 recent.pop_front();
             }
-            // Redundancy against loss: each tick is on the wire three times;
-            // the actor rejects stale and duplicate ticks.
+            // Redundancy against loss: each tick stays on the wire while newer
+            // ones are sent, so a lost datagram is superseded by a retransmit
+            // of the same tick before the server advances past it.
             for (const auto& pending : recent) {
                 peer.send(coopnet::Channel::Input,
                           coopnet::encodeInput(pending));
@@ -470,8 +479,20 @@ int runMovingClient(std::uint16_t port, std::uint32_t runMs,
                     if (ack == 0) {
                         predictor.reconcile(authoritative, 0);
                     } else {
+                        const coopnet::Vec3 before = predictor.state().position;
                         const float error =
                             predictor.reconcile(authoritative, ack);
+                        if (error > 0.1f) {
+                            const coopnet::Vec3& after = predictor.state().position;
+                            std::printf(
+                                "%s: correction %.3f m at ack %u, pending %zu, "
+                                "before (%.2f %.2f %.2f), after (%.2f %.2f %.2f), "
+                                "onGround %d\n",
+                                tag, error, ack, predictor.pendingInputs(),
+                                before.x, before.y, before.z, after.x, after.y,
+                                after.z, authoritative.onGround ? 1 : 0);
+                            std::fflush(stdout);
+                        }
                         if (ack > 60) {
                             if (error > 1e-3f) {
                                 ++corrections;
@@ -595,6 +616,31 @@ int runTwo(std::uint32_t runMs) {
     return 1;
 }
 
+namespace {
+
+bool parsePort(const char* text, std::uint16_t& port) {
+    char* end = nullptr;
+    const unsigned long value = std::strtoul(text, &end, 10);
+    if (end == text || *end != '\0' || value == 0 || value > 65535) {
+        return false;
+    }
+    port = static_cast<std::uint16_t>(value);
+    return true;
+}
+
+}  // namespace
+
+int runStandaloneServer(std::uint16_t port) {
+    coopnet::UdpSocket socket;
+    if (!socket.open(port)) {
+        std::printf("move server: cannot bind port %u\n", port);
+        return 1;
+    }
+    std::printf("move server: listening on port %u\n", socket.localPort());
+    std::fflush(stdout);
+    return serveMoving(socket);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -606,7 +652,9 @@ int main(int argc, char** argv) {
 
     if (argc < 2) {
         std::printf("usage:\n  coopnet_move local [ticks]\n"
-                    "  coopnet_move two [ms]\n");
+                    "  coopnet_move two [ms]\n"
+                    "  coopnet_move server [port]\n"
+                    "  coopnet_move client <port> [ms]\n");
         return 2;
     }
     const std::string mode = argv[1];
@@ -625,6 +673,27 @@ int main(int argc, char** argv) {
             return 2;
         }
         return runTwo(runMs);
+    }
+    if (mode == "server") {
+        std::uint16_t port = kDefaultPort;
+        if (argc > 2 && !parsePort(argv[2], port)) {
+            std::printf("coopnet_move: bad port\n");
+            return 2;
+        }
+        return runStandaloneServer(port);
+    }
+    if (mode == "client") {
+        std::uint16_t port = 0;
+        if (argc < 3 || !parsePort(argv[2], port)) {
+            std::printf("coopnet_move: bad port\n");
+            return 2;
+        }
+        std::uint32_t runMs = kDefaultRunMs;
+        if (argc > 3 && !parseMs(argv[3], runMs)) {
+            std::printf("coopnet_move: bad duration\n");
+            return 2;
+        }
+        return runMovingClient(port, runMs, "move client");
     }
 
     std::printf("coopnet_move: unknown mode '%s'\n", mode.c_str());

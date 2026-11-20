@@ -51,6 +51,12 @@ if(WIN32)
             -File ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_relay.ps1
             -BuildDir ${CMAKE_BINARY_DIR})
     set_tests_properties(coopnet_snap_relay PROPERTIES TIMEOUT 60)
+
+    add_test(NAME coopnet_move_relay
+        COMMAND powershell -NoProfile -ExecutionPolicy Bypass
+            -File ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_move_relay.ps1
+            -BuildDir ${CMAKE_BINARY_DIR})
+    set_tests_properties(coopnet_move_relay PROPERTIES TIMEOUT 120)
 endif()
 
 message(STATUS "clear_sky_coop: coopnet configured (engine build is separate)")

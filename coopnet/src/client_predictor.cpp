@@ -26,14 +26,18 @@ float ClientPredictor::reconcile(const MoveState& authoritative,
         history_.replay(dt_, [this](const InputState& input, float dt) {
             step(input, dt);
         });
-    } else if (history_.acknowledge(ackedTick) == 0) {
-        // The ack points at an input this client no longer holds: a full
-        // resync is the only correct answer.
-        history_.clear();
-    } else {
+    } else if (!history_.pending().empty() &&
+               ackedTick < history_.pending().back().tick) {
+        // The server confirmed a tick we still hold: drop it and older ones,
+        // then replay what is left. A repeated or older ack simply drops
+        // nothing, and the pending inputs must still be replayed.
+        history_.acknowledge(ackedTick);
         history_.replay(dt_, [this](const InputState& input, float dt) {
             step(input, dt);
         });
+    } else {
+        // The server is at or past our newest input: nothing to replay.
+        history_.clear();
     }
 
     const float dx = state_.position.x - before.position.x;

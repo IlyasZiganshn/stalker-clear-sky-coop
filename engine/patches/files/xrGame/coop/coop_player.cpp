@@ -480,6 +480,11 @@ void PublishLocalPlayer(CActor* actor)
         ResetRemoteEntities();
     }
 
+    // The bridge must drop the previous level's spawns before this frame feeds
+    // any of them back through BridgeTakeSpawns.
+    if (levelName.size() > 0)
+        BridgeSetWorldInfo(levelName.c_str(), static_cast<u64>(Level().GetGameTime()));
+
     if (!g_localSpawnPublished)
         g_localSpawnPublished = PublishLocalSpawn();
 
@@ -490,8 +495,5 @@ void PublishLocalPlayer(CActor* actor)
         actor->Orientation().yaw,
         static_cast<u16>(actor->MovingState() & 0x7FFF));
     PublishLocalInput(actor);
-
-    if (levelName.size() > 0)
-        BridgeSetWorldInfo(levelName.c_str(), static_cast<u64>(Level().GetGameTime()));
 }
 } // namespace coop

@@ -204,6 +204,62 @@ COOP_TEST(session_rejects_truncated_and_garbage_datagrams) {
              std::uint64_t{2});
 }
 
+COOP_TEST(session_keepalive_is_sent_when_idle) {
+    Session client;
+    CHECK(client.poll(999).empty());
+
+    const auto datagrams = client.poll(1000);
+    CHECK_EQ(datagrams.size(), std::size_t{1});
+    CHECK_EQ(datagrams[0].size(), coopnet::PacketHeader::kByteSize);
+
+    coopnet::BitReader reader(datagrams[0].data(), datagrams[0].size());
+    coopnet::PacketHeader header;
+    CHECK(coopnet::PacketHeader::read(reader, header));
+    CHECK((header.flags & coopnet::kFlagKeepalive) != 0);
+    CHECK(header.channel == Channel::Control);
+}
+
+COOP_TEST(session_keepalive_is_not_acknowledged) {
+    Session client;
+    Session server;
+
+    const auto keepalive = client.poll(1000);
+    CHECK_EQ(keepalive.size(), std::size_t{1});
+    server.onDatagram(keepalive[0].data(), keepalive[0].size(), 1000);
+    CHECK(server.hasReceived());
+    CHECK(server.takeDelivered().empty());
+
+    // The server may send its own keepalive, but must not acknowledge ours.
+    for (const auto& datagram : server.poll(1001)) {
+        coopnet::BitReader reader(datagram.data(), datagram.size());
+        coopnet::PacketHeader header;
+        CHECK(coopnet::PacketHeader::read(reader, header));
+        CHECK((header.flags & coopnet::kFlagAckOnly) == 0);
+    }
+}
+
+COOP_TEST(session_detects_peer_silence) {
+    Session server;
+    CHECK(!server.hasReceived());
+    CHECK(!server.timedOut(100000));
+
+    Session client;
+    CHECK(client.send(Channel::Control, bytesOf("x")));
+    pump(client, server, 0);
+    CHECK(server.hasReceived());
+    CHECK(!server.timedOut(4999));
+    CHECK(server.timedOut(5000));
+}
+
+COOP_TEST(session_keepalive_interval_is_configurable) {
+    SessionConfig config;
+    config.keepaliveMs = 250;
+    Session client(config);
+
+    CHECK(client.poll(249).empty());
+    CHECK_EQ(client.poll(250).size(), std::size_t{1});
+}
+
 COOP_TEST(session_respects_mtu_budget_for_every_datagram) {
     SessionConfig config;
     config.mtu = 300;

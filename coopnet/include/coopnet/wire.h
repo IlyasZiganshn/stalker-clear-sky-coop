@@ -23,6 +23,7 @@ enum PacketFlag : std::uint8_t {
     kFlagReliable = 1u << 0,
     kFlagFragment = 1u << 1,
     kFlagAckOnly = 1u << 2,
+    kFlagKeepalive = 1u << 3,
 };
 
 // Fixed 12-byte prefix of every datagram.

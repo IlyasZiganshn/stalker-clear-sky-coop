@@ -20,7 +20,8 @@ const Session::ChannelState& Session::state(Channel channel) const {
 
 void Session::emit(std::vector<std::vector<std::uint8_t>>& out, Channel channel,
                    ChannelState& channelState, std::uint16_t sequence,
-                   const std::vector<std::uint8_t>& payload, std::uint8_t flags) {
+                   const std::vector<std::uint8_t>& payload, std::uint8_t flags,
+                   std::uint32_t nowMs) {
     PacketHeader header;
     header.protocol = config_.protocol;
     header.channel = channel;
@@ -47,7 +48,8 @@ void Session::emit(std::vector<std::vector<std::uint8_t>>& out, Channel channel,
 
     out.push_back(writer.data());
     ++stats_.sentDatagrams;
-    if ((flags & kFlagAckOnly) == 0) {
+    lastSendMs_ = nowMs;
+    if ((flags & (kFlagAckOnly | kFlagKeepalive)) == 0) {
         channelState.lastSentSequence = sequence;
     }
 }
@@ -75,6 +77,9 @@ void Session::onDatagram(const std::uint8_t* data, std::size_t size,
         return;
     }
 
+    lastReceiveMs_ = nowMs;
+    hasReceived_ = true;
+
     ChannelState& channelState = state(header.channel);
 
     if ((header.flags & kFlagAckOnly) != 0) {
@@ -90,6 +95,12 @@ void Session::onDatagram(const std::uint8_t* data, std::size_t size,
         channelState.sender.onAck(header.ack, header.ackBits);
     } else {
         channelState.ack.record(header.sequence);
+    }
+
+    // A keepalive carries fresh ack fields but no message: never acknowledge
+    // it, otherwise idle peers would exchange acknowledgements forever.
+    if ((header.flags & kFlagKeepalive) != 0) {
+        return;
     }
     channelState.ackDirty = true;
 
@@ -163,7 +174,8 @@ std::vector<std::vector<std::uint8_t>> Session::poll(std::uint32_t nowMs) {
         if (channelState.reliable) {
             for (const auto& message : channelState.sender.collect(nowMs)) {
                 emit(out, channel, channelState, message.sequence, message.payload,
-                     static_cast<std::uint8_t>(kFlagReliable | message.flags));
+                     static_cast<std::uint8_t>(kFlagReliable | message.flags),
+                     nowMs);
             }
 
             while (!channelState.outbox.empty()) {
@@ -179,7 +191,7 @@ std::vector<std::vector<std::uint8_t>> Session::poll(std::uint32_t nowMs) {
                 std::vector<std::uint8_t> payload =
                     std::move(channelState.outbox.front().payload);
                 channelState.outbox.pop_front();
-                emit(out, channel, channelState, sequence, payload, flags);
+                emit(out, channel, channelState, sequence, payload, flags, nowMs);
             }
         } else {
             while (!channelState.outbox.empty()) {
@@ -188,17 +200,26 @@ std::vector<std::vector<std::uint8_t>> Session::poll(std::uint32_t nowMs) {
                     std::move(channelState.outbox.front().payload);
                 channelState.outbox.pop_front();
                 emit(out, channel, channelState,
-                     channelState.nextUnreliableSend++, payload, flags);
+                     channelState.nextUnreliableSend++, payload, flags, nowMs);
             }
         }
 
         if (channelState.ackDirty) {
             emit(out, channel, channelState, channelState.lastSentSequence, {},
-                 kFlagAckOnly);
+                 kFlagAckOnly, nowMs);
             channelState.ackDirty = false;
         }
 
         channelState.reassembler.expire(nowMs);
+    }
+
+    // Nothing to say is fine, but silence for a whole interval is not: the peer
+    // would eventually time the link out.
+    if (config_.keepaliveMs != 0 &&
+        nowMs - lastSendMs_ >= config_.keepaliveMs) {
+        ChannelState& control = state(Channel::Control);
+        emit(out, Channel::Control, control, control.lastSentSequence, {},
+             kFlagKeepalive, nowMs);
     }
 
     return out;

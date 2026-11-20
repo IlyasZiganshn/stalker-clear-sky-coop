@@ -17,6 +17,8 @@ struct SessionConfig {
     std::uint16_t protocol = kProtocolVersion;
     std::size_t mtu = 1200;
     std::size_t outboxLimit = 4096;  // datagrams waiting for the send window
+    std::uint32_t keepaliveMs = 1000;  // 0 disables keepalives
+    std::uint32_t timeoutMs = 5000;
 };
 
 // One side of a connection: packet framing, channel routing, fragmentation,
@@ -54,6 +56,15 @@ public:
     std::size_t inFlight(Channel channel) const;
     std::size_t outboxSize(Channel channel) const;
 
+    // True once any valid datagram has been accepted.
+    bool hasReceived() const { return hasReceived_; }
+
+    // Silence from the peer longer than `timeoutMs`; false until the first
+    // datagram arrives, since before that there is no link to time out.
+    bool timedOut(std::uint32_t nowMs) const {
+        return hasReceived_ && nowMs - lastReceiveMs_ >= config_.timeoutMs;
+    }
+
     const Stats& stats() const { return stats_; }
 
 private:
@@ -83,12 +94,16 @@ private:
 
     void emit(std::vector<std::vector<std::uint8_t>>& out, Channel channel,
               ChannelState& channelState, std::uint16_t sequence,
-              const std::vector<std::uint8_t>& payload, std::uint8_t flags);
+              const std::vector<std::uint8_t>& payload, std::uint8_t flags,
+              std::uint32_t nowMs);
 
     SessionConfig config_;
     std::array<ChannelState, kChannelCount> channels_{};
     std::vector<Delivery> delivered_;
     std::uint32_t nextMessageId_ = 1;
+    std::uint32_t lastReceiveMs_ = 0;
+    std::uint32_t lastSendMs_ = 0;
+    bool hasReceived_ = false;
     Stats stats_;
 };
 

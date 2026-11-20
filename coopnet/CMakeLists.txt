@@ -44,6 +44,7 @@ add_executable(coopnet_tests
     tests/test_delta.cpp
     tests/test_baseline.cpp
     tests/test_snapshot_sender.cpp
+    tests/test_world.cpp
 )
 target_link_libraries(coopnet_tests PRIVATE coopnet Threads::Threads)
 target_include_directories(coopnet_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)

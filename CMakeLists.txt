@@ -16,4 +16,10 @@ endif()
 enable_testing()
 add_subdirectory(coopnet)
 
+if(WIN32)
+    add_executable(coopnet_selftest tools/coopnet_selftest/main.cpp)
+    target_link_libraries(coopnet_selftest PRIVATE coopnet ws2_32)
+    add_test(NAME coopnet_selftest COMMAND coopnet_selftest)
+endif()
+
 message(STATUS "clear_sky_coop: coopnet configured (engine build is separate)")

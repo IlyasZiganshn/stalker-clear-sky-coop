@@ -28,6 +28,7 @@ inline int& failureCount() {
 inline void reportFailure(const char* file, int line, const std::string& message) {
     ++failureCount();
     std::printf("    %s:%d: %s\n", file, line, message.c_str());
+    std::fflush(stdout);
 }
 
 struct Registrar {

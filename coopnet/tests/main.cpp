@@ -13,6 +13,7 @@ int main() {
         test.fn();
         const bool passed = coopnet_test::failureCount() == before;
         std::printf("[%s] %s\n", passed ? " ok " : "FAIL", test.name);
+        std::fflush(stdout);
         if (!passed) {
             ++failed;
         }

@@ -90,6 +90,7 @@ public:
     const std::string& playerName() const { return playerName_; }
     std::uint8_t slot() const { return slot_; }
     std::uint32_t clientId() const { return clientId_; }
+    std::uint32_t netId() const { return netId_; }
     std::uint32_t protocolViolations() const { return protocolViolations_; }
     bool timedOut(std::uint32_t nowMs) const { return session_.timedOut(nowMs); }
 
@@ -106,6 +107,7 @@ private:
     std::string playerName_;
     std::uint8_t slot_ = 0;
     std::uint32_t clientId_ = 0;
+    std::uint32_t netId_ = 0;
     std::uint32_t sessionToken_ = 0;
     std::uint32_t protocolViolations_ = 0;
     std::vector<Session::Delivery> pending_;

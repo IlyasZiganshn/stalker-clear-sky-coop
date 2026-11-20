@@ -14,12 +14,16 @@ endif()
 # The engine lives outside this tree: it is a patched OpenXRay checkout, see
 # engine/README.md. Only our own code is built here.
 enable_testing()
+find_package(Threads REQUIRED)
 add_subdirectory(coopnet)
 
-if(WIN32)
-    add_executable(coopnet_selftest tools/coopnet_selftest/main.cpp)
-    target_link_libraries(coopnet_selftest PRIVATE coopnet ws2_32)
-    add_test(NAME coopnet_selftest COMMAND coopnet_selftest)
-endif()
+add_executable(coopnet_selftest tools/coopnet_selftest/main.cpp)
+target_link_libraries(coopnet_selftest PRIVATE coopnet Threads::Threads)
+add_test(NAME coopnet_selftest COMMAND coopnet_selftest)
+
+add_executable(coopnet_echo tools/coopnet_echo/main.cpp)
+target_link_libraries(coopnet_echo PRIVATE coopnet Threads::Threads)
+add_test(NAME coopnet_echo COMMAND coopnet_echo local)
+set_tests_properties(coopnet_echo PROPERTIES TIMEOUT 40)
 
 message(STATUS "clear_sky_coop: coopnet configured (engine build is separate)")

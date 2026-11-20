@@ -193,6 +193,7 @@ void ServerPeer::handleControl(Session::Delivery delivery) {
             slot_ = join.slot;
             ServerJoinOk ok;
             ok.netId = static_cast<std::uint32_t>(1000u + slot_);
+            netId_ = ok.netId;
             ok.rules = config_.rules;
             const auto payload = encodeServerJoinOk(ok);
             if (payload.empty() ||

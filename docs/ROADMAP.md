@@ -35,7 +35,8 @@
 в `docs/MEASUREMENTS.md`.
 
 Статус: сетевой скелет в `coopnet` готов — каналы, фрагментация, keepalive,
-handshake, сокеты, несколько клиентов в `NetServer`, сквозное демо `coopnet_echo`.
+handshake, сокеты, несколько клиентов в `NetServer`, сквозное демо `coopnet_echo`,
+измерение RTT и буфер интерполяции удалённых сущностей.
 Осталось: форк и сборка OpenXRay, спавн второго персонажа в мире, репликация
 позиции, prediction/reconciliation.
 

@@ -13,6 +13,7 @@ add_library(coopnet STATIC
     src/snapshot.cpp
     src/snapshot_store.cpp
     src/input.cpp
+    src/interp.cpp
 )
 target_include_directories(coopnet PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 if(WIN32)
@@ -34,6 +35,7 @@ add_executable(coopnet_tests
     tests/test_snapshot.cpp
     tests/test_snapshot_store.cpp
     tests/test_input.cpp
+    tests/test_interp.cpp
 )
 target_link_libraries(coopnet_tests PRIVATE coopnet Threads::Threads)
 target_include_directories(coopnet_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/tests)

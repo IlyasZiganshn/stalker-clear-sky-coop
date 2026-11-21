@@ -1,6 +1,8 @@
 #include "stdafx.h"
 
+#include <algorithm>
 #include <cstdlib>
+#include <vector>
 
 #include "XR_IOConsole.h"
 #include "xr_ioc_cmd.h"
@@ -141,7 +143,7 @@ class CCC_CoopDump : public IConsole_Command
 public:
     CCC_CoopDump(pcstr name) : IConsole_Command(name) { bEmptyArgsHandled = true; }
 
-    void Execute(pcstr) override
+    void Execute(pcstr args) override
     {
         if (g_pGameLevel == nullptr)
         {
@@ -153,13 +155,35 @@ public:
         // level the same way; the dump exists to answer that question in game.
         CObjectList& objects = g_pGameLevel->Objects;
         const u32 count = objects.o_count();
-        Msg("* coop: %u objects in level", count);
-        const u32 limit = count < 256 ? count : 256;
+        std::vector<IGameObject*> found;
+        found.reserve(count);
+        for (u32 i = 0; i < count; ++i)
+            if (IGameObject* object = objects.o_get_by_iterator(i))
+                found.push_back(object);
+
+        u32 limit = static_cast<u32>(found.size());
+        if (args[0])
+        {
+            char* end = nullptr;
+            const unsigned long value = std::strtoul(args, &end, 10);
+            if (end == args || *end != 0 || value == 0)
+            {
+                InvalidSyntax();
+                return;
+            }
+            if (value < limit)
+                limit = static_cast<u32>(value);
+        }
+
+        // Enumeration order may differ between processes, so sort by id: two
+        // logs can then be compared line by line.
+        std::sort(found.begin(), found.end(),
+            [](const IGameObject* a, const IGameObject* b) { return a->ID() < b->ID(); });
+
+        Msg("* coop: %u objects in level, dumping %u", count, limit);
         for (u32 i = 0; i < limit; ++i)
         {
-            IGameObject* object = objects.o_get_by_iterator(i);
-            if (object == nullptr)
-                continue;
+            IGameObject* object = found[i];
             const Fvector& position = object->Position();
             pcstr section = object->cNameSect_str();
             Msg("* coop: obj %u %s at %.1f %.1f %.1f%s", object->ID(),
@@ -168,7 +192,7 @@ public:
         }
     }
 
-    void Info(TInfo& I) override { xr_strcpy(I, "lists level objects and ids"); }
+    void Info(TInfo& I) override { xr_strcpy(I, "[limit], objects sorted by id"); }
 };
 
 class CCC_CoopSay : public IConsole_Command

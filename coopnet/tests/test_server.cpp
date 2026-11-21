@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "coopnet/spawn.h"
 #include "test_framework.h"
 
 using namespace coopnet;
@@ -166,6 +167,37 @@ COOP_TEST(server_reports_peer_names) {
     CHECK(server.nameOfNetId(second.netId()) == "Stalker Two");
     CHECK(server.nameOfNetId(0).empty());
     CHECK(server.nameOfNetId(0xDEADu).empty());
+}
+
+COOP_TEST(server_delivers_max_spawn_blob) {
+    NetServer server(serverOptions());
+    ClientPeer client(clientOptions());
+    const Endpoint at = endpointOf(8301);
+
+    CHECK(client.start("Big"));
+    pump(server, {{at, &client}}, 0);
+    CHECK(client.state() == PeerState::Joined);
+
+    // An engine CSE_Abstract blob may fill the whole 4 KB budget: it has to
+    // survive fragmentation and reliable reassembly, not just fit one datagram.
+    Spawn spawn;
+    spawn.netId = client.netId();
+    spawn.data.assign(kMaxSpawnBytes, 0x5A);
+    std::vector<std::uint8_t> wire;
+    CHECK(encodeSpawn(spawn, wire));
+    CHECK(wire.size() > 1400);
+    CHECK(client.send(Channel::Control, wire));
+
+    pump(server, {{at, &client}}, 10);
+    const auto delivered = server.takeDelivered();
+    CHECK_EQ(delivered.size(), std::size_t{1});
+    CHECK(delivered[0].delivery.channel == Channel::Control);
+
+    Spawn decoded;
+    CHECK(decodeSpawn(delivered[0].delivery.payload.data(),
+                      delivered[0].delivery.payload.size(), decoded));
+    CHECK_EQ(decoded.netId, spawn.netId);
+    CHECK(decoded.data == spawn.data);
 }
 
 COOP_TEST(server_expires_silent_peers) {

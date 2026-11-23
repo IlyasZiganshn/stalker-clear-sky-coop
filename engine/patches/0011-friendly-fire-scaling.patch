@@ -1,0 +1,36 @@
+diff --git a/src/xrGame/Actor.cpp b/src/xrGame/Actor.cpp
+index b456474..7d1657f 100644
+--- a/src/xrGame/Actor.cpp
++++ b/src/xrGame/Actor.cpp
+@@ -81,6 +81,8 @@
+ #include "script_hit.h"
+ //-Alundaio
+ 
++#include "coop/coop_player.h"
++
+ //const u32 patch_frames = 50;
+ //const float respawn_delay = 1.f;
+ //const float respawn_auto = 7.f;
+@@ -666,6 +668,13 @@ void CActor::Hit(SHit* pHDS)
+         }
+ 
+         HDS.power = HitArtefactsOnBelt(HDS.damage(), HDS.hit_type);
++
++        // Co-op 50% Friendly Fire scaling
++        if (HDS.who != nullptr && coop::IsPlayerOrDoll(this) && coop::IsPlayerOrDoll(HDS.who))
++        {
++            HDS.power *= 0.5f;
++        }
++
+         HDS.add_wound = true;
+         if (g_Alive())
+         {
+@@ -1095,6 +1104,8 @@ void CActor::UpdateCL()
+     inherited::UpdateCL();
+     m_pPhysics_support->in_UpdateCL();
+ 
++    coop::PublishLocalPlayer(this);
++
+     if (g_Alive())
+         PickupModeUpdate();
+ 

@@ -31,8 +31,10 @@ constexpr u32 kRemoteTimeoutMs = 2000;
 constexpr u32 kSpawnResendMs = 2000;
 // Input is sent at 60 Hz: half a second of silence means the stream is dead.
 constexpr u32 kInputTimeoutMs = 500;
+// A client that hears nothing for this long gets one warning in the log.
+constexpr u32 kHandshakeWarnMs = 5000;
 // Remote players are rendered this far in the past, between two 20 Hz samples.
-constexpr u32 kPlayerInterpDelayMs = 100;
+constexpr u32 kPlayerInterpDelayMs = 80;
 constexpr u32 kMaxRemotes = 8;
 
 struct Bridge
@@ -48,6 +50,10 @@ struct Bridge
     char playerName[coopnet::kMaxNameBytes + 1] = "player";
     bool clientJoinedLogged = false;
     bool clientEndLogged = false;
+    bool clientNoAnswerLogged = false;
+    u32 clientSinceMs = 0;
+    coopnet::PeerState lastClientState = coopnet::PeerState::Idle;
+    std::size_t lastPeerCount = 0;
     coopnet::PlayerState local;
     u32 localPublishMs = 0;
     u32 nowMs = 0;
@@ -71,6 +77,11 @@ struct Bridge
     coopnet::SpawnRegistry knownSpawns;
     std::vector<coopnet::Spawn> pendingSpawns;
     std::vector<u32> pendingDespawns;
+    char debugDrive[256] = "";
+    u32 debugTraceMs = 0;
+    u32 autoDumpLimit = 0;
+    char targetLevel[64] = "";
+    bool hasTargetLevel = false;
 };
 
 static_assert(coop::kCoopSpawnBlobMax == coopnet::kMaxSpawnBytes,
@@ -271,7 +282,17 @@ void handleAppMessage(Bridge& b, const coopnet::Session::Delivery& delivery,
         b.serverWorldKnown = true;
         b.serverClockOffsetMs = world.gameTimeMs - nowMs;
         if (b.hasLocalWorld && b.localWorld.levelName != world.levelName)
-            b.levelMismatch = true;
+        {
+            if (b.client != nullptr)
+            {
+                std::snprintf(b.targetLevel, sizeof(b.targetLevel), "%s", world.levelName.c_str());
+                b.hasTargetLevel = true;
+            }
+            else
+            {
+                b.levelMismatch = true;
+            }
+        }
         return;
     }
 
@@ -320,6 +341,9 @@ void handleAppMessage(Bridge& b, const coopnet::Session::Delivery& delivery,
         // A peer that reloaded the level publishes a fresh blob under the same
         // net_id: the old doll belongs to the previous world and must go.
         const coopnet::SpawnRegistry::Change change = b.knownSpawns.observe(spawn);
+        if (change != coopnet::SpawnRegistry::Change::Unchanged)
+            Msg("* coop: spawn blob for player %u (%u bytes)", unsigned(spawn.netId),
+                unsigned(spawn.data.size()));
 
         if (b.server && from != nullptr)
         {
@@ -391,6 +415,15 @@ void BridgeStop()
     b.levelMismatchText[0] = 0;
     b.clientJoinedLogged = false;
     b.clientEndLogged = false;
+    b.clientNoAnswerLogged = false;
+    b.clientSinceMs = 0;
+    b.lastClientState = coopnet::PeerState::Idle;
+    b.lastPeerCount = 0;
+    b.debugDrive[0] = 0;
+    b.debugTraceMs = 0;
+    b.autoDumpLimit = 0;
+    b.targetLevel[0] = 0;
+    b.hasTargetLevel = false;
     resetLevelState(b);
     std::snprintf(b.status, sizeof(b.status), "coop: off");
 }
@@ -558,6 +591,15 @@ void BridgeTick(u32 nowMs)
             }
         }
 
+        // A peer that vanishes mid-handshake is otherwise invisible: nothing is
+        // joined yet, so no join/leave event is ever reported for it.
+        const std::size_t peers = b.server->peerCount();
+        if (peers != b.lastPeerCount)
+        {
+            Msg("* coop: handshake peers %u -> %u", unsigned(b.lastPeerCount), unsigned(peers));
+            b.lastPeerCount = peers;
+        }
+
         if (b.hasLocalWorld)
         {
             std::snprintf(b.status, sizeof(b.status),
@@ -584,6 +626,32 @@ void BridgeTick(u32 nowMs)
             b.socket->sendTo(b.serverEndpoint, datagram.data(), datagram.size());
         for (const auto& delivery : b.client->takeDelivered())
             handleAppMessage(b, delivery, nullptr, nowMs);
+
+        if (b.clientSinceMs == 0)
+            b.clientSinceMs = nowMs;
+
+        // Handshake progress is invisible otherwise: a client that sits in one
+        // state forever looks exactly like a hung game in the log.
+        const coopnet::PeerState peerState = b.client->state();
+        if (peerState != b.lastClientState)
+        {
+            Msg("* coop: handshake %s (tx %llu, rx %llu datagrams)",
+                clientStateName(peerState),
+                static_cast<unsigned long long>(b.client->session().stats().sentDatagrams),
+                static_cast<unsigned long long>(b.client->session().stats().receivedDatagrams));
+            b.lastClientState = peerState;
+        }
+
+        // A host that never answers is the most common bring-up problem, so the
+        // silence is reported once instead of leaving the client hanging.
+        if (!b.client->session().hasReceived() && !b.clientNoAnswerLogged &&
+            nowMs - b.clientSinceMs >= kHandshakeWarnMs)
+        {
+            Msg("! coop: no answer from %s after %u ms",
+                b.serverEndpoint.toString().c_str(),
+                unsigned(nowMs - b.clientSinceMs));
+            b.clientNoAnswerLogged = true;
+        }
 
         if (b.client->timedOut(nowMs))
         {
@@ -670,6 +738,12 @@ bool BridgeActive()
 {
     Bridge& b = state();
     return b.server != nullptr || b.client != nullptr;
+}
+
+bool BridgeIsServer()
+{
+    Bridge& b = state();
+    return b.server != nullptr;
 }
 
 bool BridgeSay(pcstr text)
@@ -878,6 +952,8 @@ u32 BridgeTakeSpawns(SpawnInfo* out, u32 capacity)
         std::memcpy(info.data, spawn.data.data(), spawn.data.size());
         b.pendingSpawns.erase(b.pendingSpawns.begin());
     }
+    if (written > 0)
+        Msg("* coop: handing %u spawn(s) to the game", written);
     return written;
 }
 
@@ -906,6 +982,43 @@ u32 BridgeKnownSpawnCount()
     return static_cast<u32>(state().knownSpawns.size());
 }
 
+void BridgeSetDebugDrive(pcstr script)
+{
+    Bridge& b = state();
+    if (script == nullptr)
+        b.debugDrive[0] = 0;
+    else
+        std::snprintf(b.debugDrive, sizeof(b.debugDrive), "%s", script);
+}
+
+pcstr BridgeDebugDrive()
+{
+    return state().debugDrive;
+}
+
+void BridgeSetDebugTraceMs(u32 intervalMs)
+{
+    state().debugTraceMs = intervalMs;
+}
+
+u32 BridgeDebugTraceMs()
+{
+    return state().debugTraceMs;
+}
+
+void BridgeSetAutoDump(u32 limit)
+{
+    state().autoDumpLimit = limit;
+}
+
+u32 BridgeTakeAutoDump()
+{
+    Bridge& b = state();
+    const u32 limit = b.autoDumpLimit;
+    b.autoDumpLimit = 0;
+    return limit;
+}
+
 void BridgeSetWorldInfo(pcstr levelName, u64 gameTimeMs)
 {
     Bridge& b = state();
@@ -918,6 +1031,22 @@ void BridgeSetWorldInfo(pcstr levelName, u64 gameTimeMs)
     b.localWorld.gameTimeMs = gameTimeMs;
     b.localWorld.levelName = levelName;
     b.hasLocalWorld = true;
+    if (b.localWorld.levelName == b.targetLevel)
+    {
+        b.hasTargetLevel = false;
+        b.targetLevel[0] = 0;
+    }
+}
+
+bool BridgeTakeLevelChange(char* out, u32 capacity)
+{
+    Bridge& b = state();
+    if (!b.hasTargetLevel || out == nullptr || capacity == 0)
+        return false;
+    std::snprintf(out, capacity, "%s", b.targetLevel);
+    b.hasTargetLevel = false;
+    b.targetLevel[0] = 0;
+    return true;
 }
 
 u64 BridgeServerGameTime()

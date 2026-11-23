@@ -6,6 +6,10 @@
 #if defined(_WIN32)
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <mswsock.h>
+#ifndef SIO_UDP_CONNRESET
+#define SIO_UDP_CONNRESET _WSAIOW(IOC_VENDOR, 12)
+#endif
 #else
 #include <arpa/inet.h>
 #include <cerrno>
@@ -125,6 +129,11 @@ bool UdpSocket::open(std::uint16_t port) {
         closeHandle(handle);
         return false;
     }
+    // Prevent WSAECONNRESET on UDP socket when previous send triggered ICMP port unreachable
+    DWORD bytesReturned = 0;
+    BOOL newBehavior = FALSE;
+    ::WSAIoctl(handle, SIO_UDP_CONNRESET, &newBehavior, sizeof(newBehavior),
+               NULL, 0, &bytesReturned, NULL, NULL);
 #else
     const int flags = ::fcntl(handle, F_GETFL, 0);
     if (flags < 0 || ::fcntl(handle, F_SETFL, flags | O_NONBLOCK) != 0) {
@@ -177,16 +186,24 @@ std::int32_t UdpSocket::receiveFrom(void* buffer, std::size_t capacity,
     }
     sockaddr_in address{};
     AddressLength length = static_cast<AddressLength>(sizeof(address));
-    const int received = ::recvfrom(
-        static_cast<SocketHandle>(handle_), reinterpret_cast<char*>(buffer),
-        static_cast<int>(std::min<std::size_t>(capacity, INT_MAX)), 0,
-        reinterpret_cast<sockaddr*>(&address), &length);
-    if (received < 0) {
-        return -1;
+    for (;;) {
+        const int received = ::recvfrom(
+            static_cast<SocketHandle>(handle_), reinterpret_cast<char*>(buffer),
+            static_cast<int>(std::min<std::size_t>(capacity, INT_MAX)), 0,
+            reinterpret_cast<sockaddr*>(&address), &length);
+        if (received < 0) {
+#if defined(_WIN32)
+            if (::WSAGetLastError() == WSAECONNRESET) {
+                // Ignore ICMP port unreachable from dropped peer and read next datagram
+                continue;
+            }
+#endif
+            return -1;
+        }
+        from.address = ntohl(address.sin_addr.s_addr);
+        from.port = ntohs(address.sin_port);
+        return received;
     }
-    from.address = ntohl(address.sin_addr.s_addr);
-    from.port = ntohs(address.sin_port);
-    return received;
 }
 
 }  // namespace coopnet

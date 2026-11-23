@@ -8,13 +8,13 @@
 
 namespace coopnet {
 
-// Smooths the low-rate player transform stream: the last two samples of every
-// peer are kept and sampled slightly in the past, so a remote doll moves
-// continuously between 20 Hz updates instead of snapping. Discrete fields
-// (body state) are taken from the older sample.
+// Smooths the low-rate player transform stream: keeps a history buffer of recent
+// samples for every peer and samples smoothly in the past, so a remote doll moves
+// continuously between updates instead of snapping.
 class PlayerInterpolator {
 public:
     static constexpr std::size_t kMaxTracks = 16;
+    static constexpr std::size_t kMaxSamples = 16;
 
     // Out-of-order samples (older than the newest one) are ignored.
     void push(const PlayerState& state, std::uint32_t timeMs);
@@ -31,12 +31,14 @@ public:
     std::size_t size() const { return tracks_.size(); }
 
 private:
+    struct Sample {
+        PlayerState state;
+        std::uint32_t timeMs = 0;
+    };
+
     struct Track {
-        PlayerState previous;
-        PlayerState latest;
-        std::uint32_t previousMs = 0;
-        std::uint32_t latestMs = 0;
-        bool hasPrevious = false;
+        std::uint32_t netId = 0;
+        std::vector<Sample> samples;
     };
 
     std::vector<Track> tracks_;

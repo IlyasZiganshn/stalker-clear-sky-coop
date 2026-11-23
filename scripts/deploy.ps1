@@ -10,7 +10,10 @@
 param(
     [Parameter(Mandatory = $true)][string]$GameDir,
     [string]$Target,
-    [switch]$DryRun
+    [switch]$DryRun,
+    # Debug symbols are useful when a crash needs a stack, but xrGame.pdb alone
+    # is most of a gigabyte per copy: only copy them when asked.
+    [switch]$IncludeSymbols
 )
 
 $ErrorActionPreference = 'Stop'
@@ -42,6 +45,7 @@ if (-not (Test-Path $Target)) {
 
 $copied = 0
 foreach ($file in Get-ChildItem $source -File) {
+    if (-not $IncludeSymbols -and $file.Extension -eq '.pdb') { continue }
     $destination = Join-Path $Target $file.Name
     if ($DryRun) {
         Write-Host "deploy: $($file.Name) -> $destination"
@@ -54,6 +58,18 @@ foreach ($file in Get-ChildItem $source -File) {
 
 if (-not (Test-Path (Join-Path $GameDir 'fsgame.ltx'))) {
     Write-Host "deploy: no fsgame.ltx in $GameDir; OpenXRay needs its own root map"
+}
+
+# Deploy co-op Lua layer if present in repo
+$gamedataSource = Join-Path (Split-Path -Parent $PSScriptRoot) 'gamedata'
+if (Test-Path $gamedataSource) {
+    $targetGamedata = Join-Path $GameDir 'gamedata'
+    if ($DryRun) {
+        Write-Host "deploy: would copy gamedata to $targetGamedata"
+    } else {
+        Copy-Item $gamedataSource -Destination $GameDir -Recurse -Force
+        Write-Host "deploy: copied co-op gamedata layer to $targetGamedata"
+    }
 }
 
 if ($DryRun) {

@@ -1,0 +1,60 @@
+-- S.T.A.L.K.E.R.: Clear Sky Co-op Campaign Layer
+-- Entry point and state manager for cooperative campaign progression.
+
+local is_initialized = false
+local is_host = false
+local session_active = false
+
+function init()
+    if is_initialized then return end
+    is_initialized = true
+
+    printf("[coop_main] Initializing co-op campaign layer...")
+
+    -- Check if coop is active by checking bridge console status
+    local console = get_console()
+    if console then
+        console:execute("coop_status")
+    end
+
+    -- Hook task manager
+    if coop_tasks and coop_tasks.init then
+        coop_tasks.init()
+    end
+
+    -- Hook dialog locks
+    if coop_dialogs and coop_dialogs.init then
+        coop_dialogs.init()
+    end
+
+    -- Hook cutscenes
+    if coop_cutscenes and coop_cutscenes.init then
+        coop_cutscenes.init()
+    end
+
+    printf("[coop_main] Co-op campaign layer initialized.")
+end
+
+function update(delta)
+    if not is_initialized then
+        init()
+    end
+
+    if coop_tasks and coop_tasks.update then
+        coop_tasks.update(delta)
+    end
+end
+
+function set_role(host_mode)
+    is_host = host_mode
+    session_active = true
+    printf("[coop_main] Role set: is_host=%s", tostring(is_host))
+end
+
+function is_coop_host()
+    return is_host
+end
+
+function is_coop_active()
+    return session_active
+end

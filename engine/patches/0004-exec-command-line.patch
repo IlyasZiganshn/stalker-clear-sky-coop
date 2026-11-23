@@ -1,0 +1,42 @@
+diff --git a/src/xrEngine/x_ray.cpp b/src/xrEngine/x_ray.cpp
+index 20d2e57..15ed6f4 100644
+--- a/src/xrEngine/x_ray.cpp
++++ b/src/xrEngine/x_ray.cpp
+@@ -287,6 +287,37 @@ CApplication::CApplication(pcstr commandLine, GameModule* game, const std::array
+     if (loadArgs)
+         Console->Execute(loadArgs + 1);
+ 
++    // -exec <console line>: run console commands verbatim once the console
++    // exists. -start/-load above are pre-bound to the "start"/"load" commands,
++    // which is not enough for automated runs (coop_listen, coop_status, ...).
++    // The value may arrive quoted by the shell, so one pair of quotes is
++    // stripped; a ';' separated list then runs in order, so a single switch can
++    // bring up a whole session (listen, then start a level).
++    pcstr execArgs = strstr(Core.Params, "-exec ");
++    if (execArgs)
++    {
++        execArgs += xr_strlen("-exec ");
++        const size_t length = xr_strlen(execArgs);
++        string4096 command;
++        if (length >= 2 && execArgs[0] == '"' && execArgs[length - 1] == '"')
++            xr_sprintf(command, sizeof(command), "%.*s", int(length - 2), execArgs + 1);
++        else
++            xr_strcpy(command, sizeof(command), execArgs);
++        Log("* exec:", command);
++
++        for (pstr cursor = command; cursor != nullptr;)
++        {
++            pstr next = strchr(cursor, ';');
++            if (next != nullptr)
++                *next++ = 0;
++            while (*cursor == ' ' || *cursor == '\t')
++                ++cursor;
++            if (*cursor != 0)
++                Console->Execute(cursor);
++            cursor = next;
++        }
++    }
++
+     // Initialize APP
+     const auto& createLightAnim = TaskScheduler->AddTask([]
+     {

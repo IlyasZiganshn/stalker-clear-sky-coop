@@ -1,0 +1,22 @@
+diff --git a/src/xrGame/script_binder.cpp b/src/xrGame/script_binder.cpp
+index 4425c6a..f50fe9b 100644
+--- a/src/xrGame/script_binder.cpp
++++ b/src/xrGame/script_binder.cpp
+@@ -15,6 +15,7 @@
+ #include "script_game_object.h"
+ #include "GameObject.h"
+ #include "Level.h"
++#include "coop/coop_player.h"
+ 
+ // comment next string when commiting
+ //#define DBG_DISABLE_SCRIPTS
+@@ -62,6 +63,9 @@ void CScriptBinder::reload(LPCSTR section)
+     if (!pSettings->line_exist(section, "script_binding"))
+         return;
+ 
++    if (owner && coop::IsRemoteDollId(owner->ID()))
++        return;
++
+     luabind::functor<void> lua_function;
+     if (!GEnv.ScriptEngine->functor(pSettings->r_string(section, "script_binding"), lua_function))
+     {

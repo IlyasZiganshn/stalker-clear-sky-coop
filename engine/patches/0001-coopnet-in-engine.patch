@@ -1,24 +1,36 @@
-﻿diff --git a/src/xrEngine/device.cpp b/src/xrEngine/device.cpp
-index 01a427c..74bb9aa 100644
+diff --git a/src/xrEngine/device.cpp b/src/xrEngine/device.cpp
+index 01a427c..2323132 100644
 --- a/src/xrEngine/device.cpp
 +++ b/src/xrEngine/device.cpp
-@@ -11,6 +11,8 @@
+@@ -11,6 +11,10 @@
  #include "IGame_Level.h"
  #include "IGame_Persistent.h"
  
 +#include "xrNetServer/coop/coop_bridge.h"
 +
++namespace coop { void PollCoopCmdFile(); }
++
  #include "xrScriptEngine/script_space.hpp"
  
  #include <SDL.h>
-@@ -437,6 +439,7 @@ void CRenderDevice::FrameMove()
-     dwFrame++;
-     Core.dwFrame = dwFrame;
-     dwTimeContinual = TimerMM.GetElapsed_ms() - app_inactive_time;
-+    coop::BridgeTick(dwTimeContinual);
+@@ -262,9 +266,16 @@ void CRenderDevice::ProcessFrame()
+ {
+     ZoneScoped;
  
-     fTimeDeltaReal = Timer.GetElapsed_sec();
-     if (!_valid(fTimeDeltaReal))
++    // The bridge ticks here rather than in FrameMove: while a level loads,
++    // BeforeFrame runs one loading phase per call and FrameMove is skipped, so a
++    // multi-second phase would starve keepalives and time the session out.
++    coop::BridgeTick(static_cast<u32>(TimerMM.GetElapsed_ms()));
++
+     if (!BeforeFrame())
+         return;
+ 
++    coop::PollCoopCmdFile();
++
+     const u64 frameStartTime = TimerGlobal.GetElapsed_ms();
+ 
+     FrameMove();
+ 
 diff --git a/src/xrEngine/xrEngine.vcxproj b/src/xrEngine/xrEngine.vcxproj
 index f6b0554..3f9baa7 100644
 --- a/src/xrEngine/xrEngine.vcxproj

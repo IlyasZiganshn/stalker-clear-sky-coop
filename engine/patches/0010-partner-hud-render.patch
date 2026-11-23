@@ -1,0 +1,20 @@
+diff --git a/src/xrGame/Level.cpp b/src/xrGame/Level.cpp
+index 0fd7b05..a41265a 100644
+--- a/src/xrGame/Level.cpp
++++ b/src/xrGame/Level.cpp
+@@ -38,6 +38,7 @@
+ #include "MainMenu.h"
+ #include "xrEngine/XR_IOConsole.h"
+ #include "Actor.h"
++#include "coop/coop_player.h"
+ #include "player_hud.h"
+ #include "ui/UIGameTutorial.h"
+ #include "file_transfer.h"
+@@ -638,6 +639,7 @@ void CLevel::OnRender()
+     if (!game)
+         return;
+     Game().OnRender();
++    coop::OnRender();
+     // Device.Statistic->TEST1.Begin();
+     BulletManager().Render();
+     // Device.Statistic->TEST1.End();

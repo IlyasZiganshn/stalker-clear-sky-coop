@@ -29,6 +29,13 @@ user.ltx
 # tooling
 /tools/_local/
 engine/src/
+
+# private session state: install paths, logs, test copies, notes about this PC
+/local/
+/diagnostics/
+/release/
+/bin/
+ClearSkyCoopLauncher.exe
 *.pdb
 *.ilk
 *.obj

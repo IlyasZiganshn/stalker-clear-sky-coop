@@ -70,7 +70,10 @@
   `coop_connect host[:port] [name]`, `coop_say <text>`, `coop_stop`, `coop_status`.
 - `engine/patches/0001-coopnet-in-engine.patch` — `xrNetServer.vcxproj` компилирует
   `coopnet/src/*.cpp` (include `coopnet/include`), `xrEngine.vcxproj` — команды,
-  `CCC_Register` их регистрирует, `FrameMove` тикает мост.
+  `CCC_Register` их регистрирует, `CRenderDevice::ProcessFrame` тикает мост
+  стенными часами. Именно `ProcessFrame`, а не `FrameMove`: во время загрузки
+  уровня `BeforeFrame` выполняет одну фазу за кадр и `FrameMove` пропускается,
+  а фазы длиной 2–5 с иначе съедали рукопожатие по таймауту.
 - `engine/patches/files/xrGame/coop/` — `coop::PublishLocalPlayer(CActor*)`: раз
   в кадр `CActor::UpdateCL` отдаёт мировой трансформ локального актора в
   `BridgePublishLocalPlayer` и имя уровня с игровыми часами в `BridgeSetWorldInfo`.
@@ -80,6 +83,19 @@
   включённой; `BridgeTakeDespawns` удаляет её.
 - `engine/patches/0002-publish-local-player.patch` — вызов в `Actor.cpp` и
   `coop\coop_player.cpp` в `xrGame.vcxproj`.
+- `engine/patches/0003-guard-actor-camera-effects.patch` — камерные эффекты
+  (`cam_eff_factor`) применяются только к актору, которым управляет этот процесс,
+  иначе кукла на хосте дёргала бы камеру наблюдателя.
+- `engine/patches/0004-exec-command-line.patch` — свитч `-exec "<команды>"`:
+  выполняет консольные строки через `;` после создания консоли (нужен для
+  автоматических прогонов: `-start`/`-load` умеют только `start`/`load`).
+- `engine/patches/0005-coop-keeps-world-running.patch` — `CGamePersistent`
+  не ставит мир на паузу по потере фокуса окна, пока жива co-op сессия
+  (`coop::BridgeActive()`): иначе симуляция замирает у всех, кто не в фокусе.
+- `engine/patches/0006-switch-matching-fix.patch` — свитчи сравниваются как целые
+  токены: `-nogameintro` раньше совпадал с `-nogame` и отключал игровой модуль
+  (чёрное окно, уровень не грузится). После фикса `-nogameintro` действительно
+  пропускает вступительную катсцену новой игры.
 - `engine/apply.ps1` копирует файлы и `coopnet/` в дерево и применяет патчи; повторный
   запуск пропускает уже применённое.
 

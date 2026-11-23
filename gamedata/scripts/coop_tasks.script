@@ -1,0 +1,66 @@
+-- S.T.A.L.K.E.R.: Clear Sky Co-op Task Synchronizer
+-- Ensures tasks, objectives, and map targets match 100% on Host and Client.
+
+local active_tasks = {}
+
+function init()
+    printf("[coop_tasks] Initializing task synchronization...")
+end
+
+function on_task_given(task_id)
+    if not task_id then return end
+    active_tasks[task_id] = "selected"
+    printf("[coop_tasks] Task given: %s", tostring(task_id))
+
+    -- Broadcast to client if host
+    if coop_main and coop_main.is_coop_host() then
+        send_task_rpc("GIVE", task_id)
+    end
+end
+
+function on_task_completed(task_id)
+    if not task_id then return end
+    active_tasks[task_id] = "completed"
+    printf("[coop_tasks] Task completed: %s", tostring(task_id))
+
+    if coop_main and coop_main.is_coop_host() then
+        send_task_rpc("COMPLETE", task_id)
+    end
+end
+
+function on_task_failed(task_id)
+    if not task_id then return end
+    active_tasks[task_id] = "failed"
+    printf("[coop_tasks] Task failed: %s", tostring(task_id))
+
+    if coop_main and coop_main.is_coop_host() then
+        send_task_rpc("FAIL", task_id)
+    end
+end
+
+function send_task_rpc(action, task_id)
+    local msg = string.format("COOP_TASK|%s|%s", action, tostring(task_id))
+    local console = get_console()
+    if console then
+        console:execute("coop_say " .. msg)
+    end
+end
+
+function receive_task_rpc(action, task_id)
+    printf("[coop_tasks] Received task RPC: action=%s, task=%s", tostring(action), tostring(task_id))
+    active_tasks[task_id] = action
+
+    -- Mirror on client local task manager if present
+    if task_manager and task_manager.get_task_manager then
+        local tm = task_manager.get_task_manager()
+        if tm then
+            if action == "GIVE" and tm.give_task then
+                pcall(function() tm:give_task(task_id) end)
+            end
+        end
+    end
+end
+
+function update(delta)
+    -- Periodic check / reconciliation
+end

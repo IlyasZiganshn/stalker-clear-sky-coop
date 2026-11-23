@@ -1,0 +1,32 @@
+diff --git a/src/xr_3da/entry_point.cpp b/src/xr_3da/entry_point.cpp
+index 82d7da5..20a4977 100644
+--- a/src/xr_3da/entry_point.cpp
++++ b/src/xr_3da/entry_point.cpp
+@@ -43,10 +43,26 @@ struct tracy_raii
+     }
+ };
+ 
++// Switches are matched as whole tokens: "-nogame" is a prefix of "-nogameintro",
++// and a plain strstr would silently disable the game module (no level, no menu,
++// just a black window) whenever the intro switch is passed.
++static bool hasSwitch(pcstr commandLine, pcstr name)
++{
++    const size_t length = xr_strlen(name);
++    for (pcstr cursor = strstr(commandLine, name); cursor != nullptr;
++         cursor = strstr(cursor + 1, name))
++    {
++        const char next = cursor[length];
++        if (next == '\0' || next == ' ' || next == '\t' || next == '"')
++            return true;
++    }
++    return false;
++}
++
+ int entry_point(pcstr commandLine)
+ {
+     tracy_raii raii;
+-    auto* game = strstr(commandLine, "-nogame") ? nullptr : &xrGame;
++    auto* game = hasSwitch(commandLine, "-nogame") ? nullptr : &xrGame;
+ 
+     CApplication app{ commandLine, game, s_render_modules };
+ 

@@ -1,0 +1,43 @@
+diff --git a/src/xrGame/GamePersistent.cpp b/src/xrGame/GamePersistent.cpp
+index 0c65681..8391a88 100644
+--- a/src/xrGame/GamePersistent.cpp
++++ b/src/xrGame/GamePersistent.cpp
+@@ -32,6 +32,7 @@
+ #include "xrEngine/xr_input.h"
+ #include "ui/UILoadingScreen.h"
+ #include "AnselManager.h"
++#include "xrNetServer/coop/coop_bridge.h"
+ #include "xrCore/Threading/TaskManager.hpp"
+ 
+ #include "xrPhysics/IPHWorld.h"
+@@ -720,10 +721,21 @@ void CGamePersistent::DumpStatistics(IGameFont& font, IPerformanceAlert* alert)
+ static BOOL bRestorePause = FALSE;
+ static BOOL bEntryFlag = TRUE;
+ 
++// A co-op session owns a world shared with other players: freezing the
++// simulation because this window lost focus would stop the dolls for everyone
++// else and make the host look hung. The pause bookkeeping is skipped entirely so
++// activate/deactivate stay balanced.
++static bool coopKeepsRunning()
++{
++    return coop::BridgeActive();
++}
++
+ void CGamePersistent::OnAppActivate()
+ {
+     if (psDeviceFlags.test(rsAlwaysActive))
+         return;
++    if (coopKeepsRunning())
++        return;
+ 
+     bool bIsMP = (g_pGameLevel && Level().game && GameID() != eGameIDSingle);
+     bIsMP &= !Device.Paused();
+@@ -740,6 +752,8 @@ void CGamePersistent::OnAppDeactivate()
+ {
+     if (!bEntryFlag || psDeviceFlags.test(rsAlwaysActive))
+         return;
++    if (coopKeepsRunning())
++        return;
+ 
+     bool bIsMP = (g_pGameLevel && Level().game && GameID() != eGameIDSingle);
+ 

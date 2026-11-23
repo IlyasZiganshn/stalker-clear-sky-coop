@@ -1,0 +1,37 @@
+-- S.T.A.L.K.E.R.: Clear Sky Co-op Dialog Locker
+-- Prevents dialog race conditions and desync when multiple players talk to the same NPC.
+
+local locked_npcs = {}
+
+function init()
+    printf("[coop_dialogs] Initializing dialog locks...")
+end
+
+function lock_npc_dialog(npc_id, player_id)
+    if not npc_id then return false end
+    if locked_npcs[npc_id] and locked_npcs[npc_id] ~= player_id then
+        printf("[coop_dialogs] NPC %s is already locked by player %s", tostring(npc_id), tostring(locked_npcs[npc_id]))
+        return false -- Busy!
+    end
+
+    locked_npcs[npc_id] = player_id or 1
+    printf("[coop_dialogs] NPC %s locked by player %s", tostring(npc_id), tostring(player_id))
+    return true
+end
+
+function unlock_npc_dialog(npc_id, player_id)
+    if not npc_id then return end
+    if locked_npcs[npc_id] == player_id or not player_id then
+        locked_npcs[npc_id] = nil
+        printf("[coop_dialogs] NPC %s unlocked", tostring(npc_id))
+    end
+end
+
+function is_npc_busy(npc_id, querying_player_id)
+    if not npc_id then return false end
+    local locker = locked_npcs[npc_id]
+    if locker and locker ~= querying_player_id then
+        return true
+    end
+    return false
+end

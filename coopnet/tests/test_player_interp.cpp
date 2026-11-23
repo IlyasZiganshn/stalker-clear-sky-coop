@@ -119,3 +119,19 @@ COOP_TEST(player_interp_drops_stale_tracks_and_caps_the_table) {
     }
     CHECK_EQ(interp.size(), PlayerInterpolator::kMaxTracks);
 }
+
+COOP_TEST(player_interp_smoothly_interpolates_over_history_buffer) {
+    PlayerInterpolator interp;
+    // Samples arrive every 50 ms (20 Hz)
+    interp.push(player(1, 0.0f), 1000);
+    interp.push(player(1, 10.0f), 1050);
+    interp.push(player(1, 20.0f), 1100);
+    interp.push(player(1, 30.0f), 1150);
+
+    PlayerState out[1];
+    // With 100 ms render delay at nowMs = 1175:
+    // renderMs = 1175 - 100 = 1075 ms.
+    // This is halfway between sample at 1050 (x = 10.0) and sample at 1100 (x = 20.0).
+    CHECK_EQ(interp.sample(1175, 100, 2000, out, 1), 1u);
+    CHECK(near(out[0].x, 15.0f));
+}

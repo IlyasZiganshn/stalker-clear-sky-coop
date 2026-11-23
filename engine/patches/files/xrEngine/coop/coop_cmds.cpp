@@ -147,7 +147,16 @@ public:
     {
         if (g_pGameLevel == nullptr)
         {
-            Msg("* coop: no level loaded");
+            u32 limit = 100;
+            if (args[0])
+            {
+                char* end = nullptr;
+                const unsigned long val = std::strtoul(args, &end, 10);
+                if (end != args && *end == 0 && val > 0)
+                    limit = static_cast<u32>(val);
+            }
+            coop::BridgeSetAutoDump(limit);
+            Msg("* coop: dump queued for level load (limit %u)", limit);
             return;
         }
 
@@ -213,6 +222,42 @@ public:
 
     void Info(TInfo& I) override { xr_strcpy(I, "text"); }
 };
+
+class CCC_CoopDrive : public IConsole_Command
+{
+public:
+    CCC_CoopDrive(pcstr name) : IConsole_Command(name) { bEmptyArgsHandled = true; }
+
+    void Execute(pcstr args) override
+    {
+        coop::BridgeSetDebugDrive(args);
+        Msg("* coop: debug drive '%s'", coop::BridgeDebugDrive());
+    }
+
+    void Info(TInfo& I) override { xr_strcpy(I, "<delayMs> <durationMs><flags>[,...]"); }
+};
+
+class CCC_CoopTrace : public IConsole_Command
+{
+public:
+    CCC_CoopTrace(pcstr name) : IConsole_Command(name) { bEmptyArgsHandled = true; }
+
+    void Execute(pcstr args) override
+    {
+        u32 intervalMs = 0;
+        if (args[0])
+        {
+            char* end = nullptr;
+            const unsigned long val = std::strtoul(args, &end, 10);
+            if (end != args && *end == 0)
+                intervalMs = static_cast<u32>(val);
+        }
+        coop::BridgeSetDebugTraceMs(intervalMs);
+        Msg("* coop: debug trace interval %u ms", intervalMs);
+    }
+
+    void Info(TInfo& I) override { xr_strcpy(I, "[intervalMs], 0 turns it off"); }
+};
 } // namespace
 
 void CCC_RegisterCoop()
@@ -223,4 +268,44 @@ void CCC_RegisterCoop()
     CMD1(CCC_CoopStatus, "coop_status");
     CMD1(CCC_CoopSay, "coop_say");
     CMD1(CCC_CoopDump, "coop_dump");
+    CMD1(CCC_CoopDrive, "coop_drive");
+    CMD1(CCC_CoopTrace, "coop_trace");
 }
+
+namespace coop
+{
+void PollCoopCmdFile()
+{
+    if (!FS.path_exist("$app_data_root$"))
+        return;
+
+    string_path cmd_path;
+    if (!FS.update_path(cmd_path, "$app_data_root$", "coop_cmd.txt"))
+        return;
+
+    if (GetFileAttributesA(cmd_path) == INVALID_FILE_ATTRIBUTES)
+        return;
+
+    FILE* f = fopen(cmd_path, "rt");
+    if (!f)
+        return;
+
+    char command[512] = "";
+    if (fgets(command, sizeof(command), f))
+    {
+        size_t len = xr_strlen(command);
+        while (len > 0 && (command[len - 1] == '\r' || command[len - 1] == '\n'))
+        {
+            command[--len] = 0;
+        }
+    }
+    fclose(f);
+    DeleteFileA(cmd_path);
+
+    if (command[0] && Console)
+    {
+        Msg("* coop: exec from coop_cmd.txt: '%s'", command);
+        Console->Execute(command);
+    }
+}
+} // namespace coop

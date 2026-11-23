@@ -17,6 +17,7 @@ XRNETSERVER_API void BridgeStop();
 XRNETSERVER_API void BridgeTick(u32 nowMs);
 
 XRNETSERVER_API bool BridgeActive();
+XRNETSERVER_API bool BridgeIsServer();
 XRNETSERVER_API u32 BridgePeerCount();
 // Copies the handshake name of a joined remote player into out; false when the
 // peer is unknown or this process is the client (it has no name table).
@@ -114,10 +115,32 @@ XRNETSERVER_API u32 BridgeTakeDespawns(u32* out, u32 capacity);
 XRNETSERVER_API u32 BridgeLocalSpawnSize();
 XRNETSERVER_API u32 BridgeKnownSpawnCount();
 
+// Test scaffolding for the automated motion tests. Console commands are
+// registered by the engine before the game module exists, so a debug request
+// cannot reach xrGame directly; it travels through the bridge instead and the
+// game side owns the pacing (it has the level and the device clock).
+//
+// The drive script is "<delayMs> <phase>[,<phase>...]", a phase is
+// "<durationMs><flags>" with flags f/b/l/r (move), c (crouch), a (accelerate),
+// t (sprint toggle), j (jump). Example: "3000 2000f,1000fc,600j". The script
+// starts counting once the level is up and a peer has joined, so it does not
+// depend on how long the level took to load. Empty text clears it.
+XRNETSERVER_API void BridgeSetDebugDrive(pcstr script);
+XRNETSERVER_API pcstr BridgeDebugDrive();
+// Interval of the doll state trace in the log, 0 turns it off.
+XRNETSERVER_API void BridgeSetDebugTraceMs(u32 intervalMs);
+XRNETSERVER_API u32 BridgeDebugTraceMs();
+
+// Queues an object dump for when the level is loaded; 0 clears it.
+XRNETSERVER_API void BridgeSetAutoDump(u32 limit);
+// Takes and clears the queued auto-dump limit, or 0 if none.
+XRNETSERVER_API u32 BridgeTakeAutoDump();
+
 // Tells the bridge which level and game clock the local process is on. Call it
-// every frame; outgoing world info is throttled. A client whose level differs
-// from the server's is disconnected with a message in BridgeStatus().
+// every frame; outgoing world info is throttled.
 XRNETSERVER_API void BridgeSetWorldInfo(pcstr levelName, u64 gameTimeMs);
+// Returns true and copies the level name if the host moved to a different level.
+XRNETSERVER_API bool BridgeTakeLevelChange(char* out, u32 capacity);
 // Server game clock as this client estimates it (last sample + local time);
 // 0 when the client has not heard from the server yet.
 XRNETSERVER_API u64 BridgeServerGameTime();

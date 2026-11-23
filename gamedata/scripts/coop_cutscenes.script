@@ -1,0 +1,59 @@
+-- S.T.A.L.K.E.R.: Clear Sky Co-op Cutscene Synchronizer
+-- Synchronizes input locking when story sequences or cutscenes trigger.
+
+local in_cutscene = false
+
+function init()
+    printf("[coop_cutscenes] Initializing cutscene synchronizer...")
+end
+
+function start_cutscene()
+    if in_cutscene then return end
+    in_cutscene = true
+    printf("[coop_cutscenes] Cutscene started - locking input for co-op session")
+
+    if level and level.disable_input then
+        level.disable_input()
+    end
+
+    if coop_main and coop_main.is_coop_host() then
+        send_cutscene_rpc("START")
+    end
+end
+
+function stop_cutscene()
+    if not in_cutscene then return end
+    in_cutscene = false
+    printf("[coop_cutscenes] Cutscene stopped - enabling input")
+
+    if level and level.enable_input then
+        level.enable_input()
+    end
+
+    if coop_main and coop_main.is_coop_host() then
+        send_cutscene_rpc("STOP")
+    end
+end
+
+function send_cutscene_rpc(state)
+    local msg = string.format("COOP_CUTSCENE|%s", state)
+    local console = get_console()
+    if console then
+        console:execute("coop_say " .. msg)
+    end
+end
+
+function receive_cutscene_rpc(state)
+    printf("[coop_cutscenes] Received cutscene RPC: %s", tostring(state))
+    if state == "START" then
+        in_cutscene = true
+        if level and level.disable_input then
+            level.disable_input()
+        end
+    elseif state == "STOP" then
+        in_cutscene = false
+        if level and level.enable_input then
+            level.enable_input()
+        end
+    end
+end

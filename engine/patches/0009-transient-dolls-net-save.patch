@@ -1,0 +1,26 @@
+diff --git a/src/xrGame/Actor_Network.cpp b/src/xrGame/Actor_Network.cpp
+index 41130f0..6318b17 100644
+--- a/src/xrGame/Actor_Network.cpp
++++ b/src/xrGame/Actor_Network.cpp
+@@ -43,6 +43,7 @@
+ #include "game_base_kill_type.h"
+ #include "holder_custom.h"
+ #include "actor_memory.h"
++#include "coop/coop_player.h"
+ #include "actor_statistic_mgr.h"
+ #include "CharacterPhysicsSupport.h"
+ #include "game_cl_base_weapon_usage_statistic.h"
+@@ -1867,7 +1868,12 @@ void CActor::net_Save(NET_Packet& P)
+ #endif
+ }
+ 
+-bool CActor::net_SaveRelevant() { return true; }
++bool CActor::net_SaveRelevant()
++{
++    if (coop::IsRemoteDollId(ID()))
++        return false;
++    return true;
++}
+ void CActor::SetHitInfo(IGameObject* who, IGameObject* weapon, s16 element, Fvector Pos, Fvector Dir)
+ {
+     m_iLastHitterID = (who != NULL) ? who->ID() : u16(-1);

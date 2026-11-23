@@ -3,19 +3,25 @@
 #include "coop_player.h"
 
 #include <cmath>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
+#include <vector>
 
 #include "Actor.h"
 #include "CharacterPhysicsSupport.h"
 #include "Inventory.h"
 #include "Level.h"
+#include "map_manager.h"
 #include "phmovementcontrol.h"
 #include "xrEngine/device.h"
 #include "xrServer.h"
 #include "xrServerEntities/xrMessages.h"
 #include "xrServer_Objects_ALife_All.h"
+#include "xrEngine/XR_IOConsole.h"
 #include "xrNetServer/coop/coop_bridge.h"
+#include "ai_space.h"
+#include "xrScriptEngine/script_engine.hpp"
 
 namespace coop
 {
@@ -24,8 +30,8 @@ namespace
 constexpr u32 kMaxRemoteEntities = 8;
 constexpr u16 kFirstRemoteGameId = 0xF000;
 constexpr u16 kLastRemoteGameId = 0xFFF0;
-// The host simulates dolls from input and broadcasts their state at 20 Hz.
-constexpr u32 kDollPublishIntervalMs = 50;
+// The host simulates dolls from input and broadcasts their state at ~30 Hz.
+constexpr u32 kDollPublishIntervalMs = 33;
 
 // net_id <-> local game id of a remote player doll. The host and every client
 // allocate their own ids: game ids are only unique inside one process.
@@ -44,6 +50,9 @@ u32 g_dollPublishMs = 0;
 // its dolls behind when it stops.
 char g_levelName[128] = "";
 bool g_hadSession = false;
+u32 g_lastTraceMs = 0;
+u32 g_driveStartMs = 0;
+bool g_driveFinishedLogged = false;
 
 u16 FindRemoteGameId(u32 netId)
 {
@@ -88,14 +97,20 @@ void ResetRemoteEntities()
     {
         if (remote.netId == 0)
             continue;
+        if (g_pGameLevel != nullptr)
+        {
+            Level().MapManager().RemoveMapLocationByObjectID(remote.gameId);
+        }
         if (IGameObject* object = Level().Objects.net_Find(remote.gameId))
         {
-            object->net_Destroy();
-            Level().Objects.Destroy(object);
+            object->setDestroy(true);
         }
         remote = RemoteEntity{};
     }
     g_nextRemoteId = kFirstRemoteGameId;
+    g_lastTraceMs = 0;
+    g_driveStartMs = 0;
+    g_driveFinishedLogged = false;
 }
 
 // Remote dolls live in a high id range that normal level spawns do not use;
@@ -119,24 +134,40 @@ u16 AllocateRemoteGameId()
 bool PublishLocalSpawn()
 {
     if (Level().Server == nullptr)
+    {
+        Msg("! coop: local spawn unavailable (no level server)");
         return false;
+    }
 
     CSE_Abstract* entity = Level().Server->ID_to_entity(g_actor->ID());
     if (entity == nullptr)
+    {
+        Msg("! coop: local spawn unavailable (actor %u has no server entity)", g_actor->ID());
         return false;
+    }
 
     // bLocal = FALSE also strips LOCAL/ASPLAYER: the receiver must not adopt
     // this actor as its own controlled entity.
     NET_Packet packet;
     entity->Spawn_Write(packet, FALSE);
-    return BridgeSetLocalSpawn(packet.B.data, packet.B.count);
+    if (!BridgeSetLocalSpawn(packet.B.data, packet.B.count))
+    {
+        Msg("! coop: local spawn rejected (%u bytes)", unsigned(packet.B.count));
+        return false;
+    }
+    Msg("* coop: local spawn published (%u bytes)", unsigned(packet.B.count));
+    return true;
 }
 
 bool SpawnRemote(const SpawnInfo& info)
 {
     if (info.netId == 0 || info.size < sizeof(u16) ||
         info.size > sizeof(NET_Packet::B.data))
+    {
+        Msg("! coop: blob of player %u is unusable (%u bytes)", info.netId,
+            unsigned(info.size));
         return false;
+    }
     // A repeated spawn (late joiner, retransmit, periodic resend) must not
     // create a second doll — but a doll that died with a reloaded level is
     // replaced, because the blob refers to the new world.
@@ -156,16 +187,25 @@ bool SpawnRemote(const SpawnInfo& info)
     u16 header = 0;
     packet.r_begin(header);
     if (header != M_SPAWN)
+    {
+        Msg("! coop: blob of player %u is not a spawn packet (0x%04x)", info.netId,
+            unsigned(header));
         return false;
+    }
 
     shared_str name;
     packet.r_stringZ(name);
     CSE_Abstract* entity = F_entity_Create(name.c_str());
     if (entity == nullptr)
+    {
+        Msg("! coop: cannot create '%s' for remote player %u", name.c_str(), info.netId);
         return false;
+    }
 
     if (!entity->Spawn_Read(packet) || !entity->match_configuration())
     {
+        Msg("! coop: blob of player %u does not read back as '%s'", info.netId,
+            name.c_str());
         F_entity_Destroy(entity);
         return false;
     }
@@ -198,6 +238,10 @@ bool SpawnRemote(const SpawnInfo& info)
     object->setEnabled(true);
 
     RememberRemote(info.netId, gameId);
+    if (g_pGameLevel != nullptr)
+    {
+        Level().MapManager().AddMapLocation("mp_friend_location", gameId);
+    }
     Msg("* coop: remote player %u spawned as game id %u", info.netId, gameId);
     return true;
 }
@@ -208,10 +252,13 @@ void DespawnRemote(u32 netId)
     if (gameId == 0xFFFF)
         return;
 
+    if (g_pGameLevel != nullptr)
+    {
+        Level().MapManager().RemoveMapLocationByObjectID(gameId);
+    }
     if (IGameObject* object = Level().Objects.net_Find(gameId))
     {
-        object->net_Destroy();
-        Level().Objects.Destroy(object);
+        object->setDestroy(true);
     }
     ForgetRemote(netId);
     Msg("* coop: remote player %u removed (game id %u)", netId, gameId);
@@ -249,8 +296,16 @@ void ApplyRemoteTransforms(const PlayerInput* inputs, u32 inputCount)
         // animation does not freeze between the rare input samples.
         if (CActor* actor = smart_cast<CActor*>(object))
         {
+            actor->Orientation().yaw = players[i].yaw;
             actor->SetBodyState(players[i].bodyState);
+            actor->SetWishfulBodyState(players[i].bodyState);
             actor->g_SetAnimation(players[i].bodyState);
+
+            if (actor->character_physics_support() && actor->character_physics_support()->movement())
+            {
+                actor->character_physics_support()->movement()->SetPosition(actor->Position());
+                actor->character_physics_support()->movement()->SetVelocity(0.f, 0.f, 0.f);
+            }
         }
     }
 }
@@ -426,9 +481,205 @@ void PollRemoteEntities()
     PublishDollStates(inputs, inputCount);
 }
 
-void PublishLocalInput(CActor* actor)
+struct DrivePhase
 {
-    const u32 mstate = actor->MovingState();
+    u32 durationMs = 0;
+    u32 mstate = 0;
+};
+
+struct DrivePlan
+{
+    u32 delayMs = 0;
+    std::vector<DrivePhase> phases;
+    u32 totalDurationMs = 0;
+    bool valid = false;
+};
+
+DrivePlan ParseDriveScript(pcstr script)
+{
+    DrivePlan plan;
+    if (script == nullptr || script[0] == 0)
+        return plan;
+
+    while (*script == ' ' || *script == '\t')
+        ++script;
+
+    char* end = nullptr;
+    const unsigned long delay = std::strtoul(script, &end, 10);
+    if (end == script)
+        return plan;
+    plan.delayMs = static_cast<u32>(delay);
+
+    while (*end == ' ' || *end == '\t')
+        ++end;
+
+    pcstr cursor = end;
+    plan.totalDurationMs = plan.delayMs;
+
+    while (cursor != nullptr && *cursor != 0)
+    {
+        pcstr next = strchr(cursor, ',');
+        char token[64] = "";
+        const size_t len = next ? static_cast<size_t>(next - cursor) : xr_strlen(cursor);
+        if (len == 0 || len >= sizeof(token))
+            break;
+        std::memcpy(token, cursor, len);
+        token[len] = 0;
+
+        char* durEnd = nullptr;
+        const unsigned long dur = std::strtoul(token, &durEnd, 10);
+        if (durEnd != token && dur > 0)
+        {
+            DrivePhase phase;
+            phase.durationMs = static_cast<u32>(dur);
+            for (const char* f = durEnd; *f != 0; ++f)
+            {
+                switch (*f)
+                {
+                case 'f': phase.mstate |= mcFwd; break;
+                case 'b': phase.mstate |= mcBack; break;
+                case 'l': phase.mstate |= mcLStrafe; break;
+                case 'r': phase.mstate |= mcRStrafe; break;
+                case 'c': phase.mstate |= mcCrouch; break;
+                case 'a': phase.mstate |= mcAccel; break;
+                case 't': phase.mstate |= mcSprint; break;
+                case 'j': phase.mstate |= mcJump; break;
+                default: break;
+                }
+            }
+            plan.phases.push_back(phase);
+            plan.totalDurationMs += phase.durationMs;
+        }
+
+        cursor = next ? next + 1 : nullptr;
+    }
+
+    plan.valid = !plan.phases.empty();
+    return plan;
+}
+
+char g_lastDriveScript[256] = "";
+DrivePlan g_currentPlan;
+
+u32 EvaluateDebugDrive(u32 nowMs)
+{
+    pcstr script = BridgeDebugDrive();
+    if (script == nullptr || script[0] == 0)
+    {
+        g_driveStartMs = 0;
+        g_driveFinishedLogged = false;
+        g_lastDriveScript[0] = 0;
+        g_currentPlan = DrivePlan{};
+        return 0;
+    }
+
+    if (xr_strcmp(g_lastDriveScript, script) != 0)
+    {
+        std::snprintf(g_lastDriveScript, sizeof(g_lastDriveScript), "%s", script);
+        g_currentPlan = ParseDriveScript(script);
+        g_driveStartMs = 0;
+        g_driveFinishedLogged = false;
+    }
+
+    if (!g_currentPlan.valid)
+        return 0;
+
+    // Wait until peer has joined and level is active
+    if (BridgePeerCount() == 0 || !g_localSpawnPublished)
+    {
+        g_driveStartMs = 0;
+        return 0;
+    }
+
+    if (g_driveStartMs == 0)
+    {
+        g_driveStartMs = nowMs;
+        Msg("* coop: debug drive started (delay %u ms, %u phase(s), total %u ms)",
+            g_currentPlan.delayMs, static_cast<u32>(g_currentPlan.phases.size()),
+            g_currentPlan.totalDurationMs);
+    }
+
+    const u32 elapsed = nowMs - g_driveStartMs;
+    if (elapsed < g_currentPlan.delayMs)
+        return 0;
+
+    u32 phaseStart = g_currentPlan.delayMs;
+    for (const auto& phase : g_currentPlan.phases)
+    {
+        const u32 phaseEnd = phaseStart + phase.durationMs;
+        if (elapsed >= phaseStart && elapsed < phaseEnd)
+            return phase.mstate;
+        phaseStart = phaseEnd;
+    }
+
+    if (!g_driveFinishedLogged)
+    {
+        Msg("* coop: debug drive finished after %u ms", elapsed);
+        g_driveFinishedLogged = true;
+    }
+    return 0;
+}
+
+void TraceDollStates(CActor* actor, u32 nowMs)
+{
+    const u32 traceInterval = BridgeDebugTraceMs();
+    if (traceInterval == 0 || nowMs - g_lastTraceMs < traceInterval)
+        return;
+    g_lastTraceMs = nowMs;
+
+    if (actor != nullptr)
+    {
+        const Fvector& pos = actor->Position();
+        Msg("* coop: trace actor at %.2f %.2f %.2f, yaw %.2f, mstate 0x%04x",
+            pos.x, pos.y, pos.z, actor->Orientation().yaw, actor->MovingState());
+    }
+
+    for (const auto& remote : g_remotes)
+    {
+        if (remote.netId == 0 || remote.gameId == 0xFFFF)
+            continue;
+        IGameObject* obj = Level().Objects.net_Find(remote.gameId);
+        if (obj == nullptr)
+            continue;
+        CActor* remoteActor = smart_cast<CActor*>(obj);
+        const Fvector& pos = obj->Position();
+        const u32 mstate = remoteActor ? remoteActor->MovingState() : 0;
+        Msg("* coop: trace doll %u (game id %u) at %.2f %.2f %.2f, yaw %.2f, mstate 0x%04x",
+            remote.netId, remote.gameId, pos.x, pos.y, pos.z, obj->Orientation().yaw, mstate);
+    }
+}
+
+void DumpLevelObjects(u32 limit)
+{
+    CObjectList& objects = Level().Objects;
+    const u32 count = objects.o_count();
+    std::vector<IGameObject*> found;
+    found.reserve(count);
+    for (u32 i = 0; i < count; ++i)
+        if (IGameObject* object = objects.o_get_by_iterator(i))
+            found.push_back(object);
+
+    if (limit > found.size())
+        limit = static_cast<u32>(found.size());
+
+    std::sort(found.begin(), found.end(),
+        [](const IGameObject* a, const IGameObject* b) { return a->ID() < b->ID(); });
+
+    Msg("* coop: %u objects in level, dumping %u", count, limit);
+    for (u32 i = 0; i < limit; ++i)
+    {
+        IGameObject* object = found[i];
+        const Fvector& position = object->Position();
+        pcstr section = object->cNameSect_str();
+        Msg("* coop: obj %u %s at %.1f %.1f %.1f%s", object->ID(),
+            section ? section : "?", position.x, position.y, position.z,
+            object->Local() ? " local" : "");
+    }
+}
+
+void PublishLocalInput(CActor* actor, u32 driveMstate)
+{
+    const u32 mstate = actor->MovingState() | driveMstate;
     float moveX = 0.f;
     float moveY = 0.f;
     if (mstate & mcFwd)
@@ -485,15 +736,157 @@ void PublishLocalPlayer(CActor* actor)
     if (levelName.size() > 0)
         BridgeSetWorldInfo(levelName.c_str(), static_cast<u64>(Level().GetGameTime()));
 
+    char targetLevel[64] = "";
+    if (BridgeTakeLevelChange(targetLevel, sizeof(targetLevel)))
+    {
+        Msg("* coop: host moved to level '%s', synchronizing transition...", targetLevel);
+        string256 command;
+        xr_sprintf(command, sizeof(command), "jump_to_level %s", targetLevel);
+        Console->Execute(command);
+        return;
+    }
+
     if (!g_localSpawnPublished)
         g_localSpawnPublished = PublishLocalSpawn();
 
+    const u32 autoDump = BridgeTakeAutoDump();
+    if (autoDump > 0)
+        DumpLevelObjects(autoDump);
+
+    const u32 driveMstate = EvaluateDebugDrive(Device.dwTimeGlobal);
+    if (driveMstate != 0)
+    {
+        actor->SetWishfulBodyState(driveMstate);
+    }
+
     PollRemoteEntities();
+
+    TraceDollStates(actor, Device.dwTimeGlobal);
 
     const Fvector& position = actor->Position();
     BridgePublishLocalPlayer(position.x, position.y, position.z,
         actor->Orientation().yaw,
         static_cast<u16>(actor->MovingState() & 0x7FFF));
-    PublishLocalInput(actor);
+    PublishLocalInput(actor, driveMstate);
+
+    // Invoke Lua coop campaign hooks
+    if (GEnv.ScriptEngine != nullptr)
+    {
+        luabind::functor<void> updateFn;
+        if (GEnv.ScriptEngine->functor("coop_main.update", updateFn))
+        {
+            try {
+                updateFn(Device.fTimeDelta);
+            } catch (...) {}
+        }
+        luabind::functor<void> roleFn;
+        if (GEnv.ScriptEngine->functor("coop_main.set_role", roleFn))
+        {
+            try {
+                roleFn(BridgeIsServer());
+            } catch (...) {}
+        }
+    }
+}
+
+void OnLevelStop()
+{
+    g_localSpawnPublished = false;
+    g_levelName[0] = 0;
+    ResetRemoteEntities();
+}
+
+bool IsRemoteDollId(u16 gameId)
+{
+    return gameId >= kFirstRemoteGameId && gameId <= kLastRemoteGameId;
+}
+
+u32 FindRemoteNetId(u16 gameId)
+{
+    for (const auto& remote : g_remotes)
+        if (remote.gameId == gameId)
+            return remote.netId;
+    return 0;
+}
+
+bool GetRemotePeerName(u16 gameId, char* out, u32 capacity)
+{
+    const u32 netId = FindRemoteNetId(gameId);
+    if (netId == 0)
+        return false;
+    return BridgePeerName(netId, out, capacity);
+}
+
+bool IsPlayerOrDoll(IGameObject* obj)
+{
+    if (obj == nullptr)
+        return false;
+    if (g_pGameLevel != nullptr && obj == Level().CurrentEntity())
+        return true;
+    return IsRemoteDollId(obj->ID());
+}
+
+void OnRender()
+{
+    if (g_pGameLevel == nullptr)
+        return;
+
+    for (const auto& remote : g_remotes)
+    {
+        if (remote.netId == 0 || remote.gameId == 0xFFFF)
+            continue;
+
+        IGameObject* object = Level().Objects.net_Find(remote.gameId);
+        if (object == nullptr)
+            continue;
+
+        CActor* doll = smart_cast<CActor*>(object);
+        if (doll == nullptr || !doll->g_Alive())
+            continue;
+
+        char peerName[64] = "Partner";
+        if (!BridgePeerName(remote.netId, peerName, sizeof(peerName)) || peerName[0] == 0)
+        {
+            xr_sprintf(peerName, "Partner");
+        }
+
+        // 1. Draw Name above head
+        Fvector dpos{ 0.f, 0.40f, 0.f };
+        float dup = 0.f;
+        // Cyan-green name color (0xEE32FF96)
+        doll->RenderText(peerName, dpos, &dup, color_rgba(50, 255, 150, 238));
+
+        // 2. Health percentage & status
+        float health = doll->GetfHealth();
+        if (health < 0.f) health = 0.f;
+        if (health > 1.f) health = 1.f;
+        int hpPercent = static_cast<int>(health * 100.f + 0.5f);
+
+        char hpStr[64];
+        u32 hpColor;
+        if (hpPercent > 50)
+        {
+            hpColor = color_rgba(80, 240, 80, 230); // Green
+            xr_sprintf(hpStr, "[HP: %d%%]", hpPercent);
+        }
+        else if (hpPercent > 20)
+        {
+            hpColor = color_rgba(255, 200, 40, 230); // Orange
+            xr_sprintf(hpStr, "[HP: %d%%]", hpPercent);
+        }
+        else if (hpPercent > 0)
+        {
+            hpColor = color_rgba(255, 50, 50, 240); // Red
+            xr_sprintf(hpStr, "[HP: %d%% - WOUNDED]", hpPercent);
+        }
+        else
+        {
+            hpColor = color_rgba(255, 30, 30, 255);
+            xr_sprintf(hpStr, "[DOWNED / РАНЕН]");
+        }
+
+        dpos.y += 0.22f;
+        doll->RenderText(hpStr, dpos, &dup, hpColor);
+    }
 }
 } // namespace coop

@@ -1,0 +1,116 @@
+diff --git a/src/xrGame/ActorInput.cpp b/src/xrGame/ActorInput.cpp
+index 47d79d2..63ca66b 100644
+--- a/src/xrGame/ActorInput.cpp
++++ b/src/xrGame/ActorInput.cpp
+@@ -31,6 +31,7 @@
+ #include "HUDManager.h"
+ #include "Weapon.h"
+ #include "GamePersistent.h"
++#include "coop/coop_player.h"
+ 
+ bool g_bAutoClearCrouch = true;
+ 
+@@ -682,6 +683,17 @@ void CActor::ActorUse()
+     {
+         if (m_pPersonWeLookingAt)
+         {
++            // Co-op partner doll: direct inventory exchange without talk crash
++            if (coop::IsRemoteDollId(m_pPersonWeLookingAt->object_id()))
++            {
++                CUIGameSP* pGameSP = smart_cast<CUIGameSP*>(CurrentGameUI());
++                if (pGameSP)
++                {
++                    pGameSP->StartCarBody(this, m_pPersonWeLookingAt);
++                }
++                return;
++            }
++
+             CEntityAlive* pEntityAliveWeLookingAt = smart_cast<CEntityAlive*>(m_pPersonWeLookingAt);
+ 
+             VERIFY(pEntityAliveWeLookingAt);
+diff --git a/src/xrGame/actor_communication.cpp b/src/xrGame/actor_communication.cpp
+index bf44a4d..0f7f3a8 100644
+--- a/src/xrGame/actor_communication.cpp
++++ b/src/xrGame/actor_communication.cpp
+@@ -29,6 +29,7 @@
+ #include "CustomDetector.h"
+ #include "ai/monsters/basemonster/base_monster.h"
+ #include "ai/trader/ai_trader.h"
++#include "coop/coop_player.h"
+ 
+ void CActor::AddEncyclopediaArticle(const CInfoPortion* info_portion) const
+ {
+@@ -237,6 +238,9 @@ void CActor::TryToTalk()
+ 
+ void CActor::RunTalkDialog(CInventoryOwner* talk_partner, bool disable_break)
+ {
++    if (talk_partner && coop::IsRemoteDollId(talk_partner->object_id()))
++        return;
++
+     //предложить поговорить с нами
+     if (talk_partner->OfferTalk(this))
+     {
+diff --git a/src/xrGame/ui/UICharacterInfo.cpp b/src/xrGame/ui/UICharacterInfo.cpp
+index 667e56d..96c63fa 100644
+--- a/src/xrGame/ui/UICharacterInfo.cpp
++++ b/src/xrGame/ui/UICharacterInfo.cpp
+@@ -20,6 +20,7 @@
+ #include "xrServer.h"
+ #include "xrServerEntities/xrServer_Objects_ALife_Monsters.h"
+ #include "UIHelper.h"
++#include "coop/coop_player.h"
+ 
+ using namespace InventoryUtilities;
+ 
+@@ -128,6 +129,16 @@ void CUICharacterInfo::InitCharacter(u16 id)
+     m_ownerID = id;
+ 
+     CSE_ALifeTraderAbstract* T = ch_info_get_from_id(m_ownerID);
++    if (!T)
++    {
++        char peerName[64] = "Partner";
++        if (coop::IsRemoteDollId(m_ownerID))
++        {
++            coop::GetRemotePeerName(m_ownerID, peerName, sizeof(peerName));
++        }
++        InitCharacterMP(peerName, "ui_inGame2_Stalker_1");
++        return;
++    }
+ 
+     CCharacterInfo chInfo;
+     chInfo.Init(T);
+@@ -277,6 +288,12 @@ void CUICharacterInfo::ResetAllStrings()
+ 
+ void CUICharacterInfo::UpdateRelation()
+ {
++    if (coop::IsRemoteDollId(m_ownerID))
++    {
++        SetRelation(ALife::eRelationTypeFriend, 1000);
++        return;
++    }
++
+     if (!m_icons[eRelation] || !m_icons[eRelationCaption])
+     {
+         return;
+@@ -294,6 +311,11 @@ void CUICharacterInfo::UpdateRelation()
+ 
+         CSE_ALifeTraderAbstract* T = ch_info_get_from_id(m_ownerID);
+         CSE_ALifeTraderAbstract* TA = ch_info_get_from_id(Actor()->ID());
++        if (!T || !TA)
++        {
++            SetRelation(ALife::eRelationTypeFriend, 1000);
++            return;
++        }
+ 
+         SetRelation(RELATION_REGISTRY().GetRelationType(T, TA), RELATION_REGISTRY().GetAttitude(T, TA));
+     }
+@@ -308,6 +330,9 @@ void CUICharacterInfo::Update()
+ {
+     inherited::Update();
+ 
++    if (coop::IsRemoteDollId(m_ownerID))
++        return;
++
+     if (hasOwner() && (m_bForceUpdate || (Device.dwFrame % 50 == 0)))
+     {
+         m_bForceUpdate = false;

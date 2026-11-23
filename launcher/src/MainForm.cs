@@ -1,9 +1,11 @@
 using System;
 using System.IO;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Windows.Forms;
 using System.Diagnostics;
 using System.Collections.Generic;
+using System.Reflection;
 
 namespace ClearSkyCoop.Launcher
 {
@@ -11,398 +13,833 @@ namespace ClearSkyCoop.Launcher
     {
         private LobbyBeaconService _beaconService;
         private string _gamePath;
+        private string _localIp = "127.0.0.1";
 
-        // UI Controls
-        private TabControl _tabControl;
-        private TabPage _tabLobby;
-        private TabPage _tabHost;
-        private TabPage _tabSettings;
-        private TabPage _tabDiagnostics;
+        // Custom Titlebar
+        private TitleBarControl _titleBar;
 
-        // Lobby Tab
+        // Navigation Sidebar
+        private Panel _sidebar;
+        private ModernButton _btnNavLobby;
+        private ModernButton _btnNavHost;
+        private ModernButton _btnNavSettings;
+        private ModernButton _btnNavDiag;
+        private Label _lblSidebarPlayer;
+        private Label _lblSidebarIp;
+
+        // Content Area & Pages
+        private Panel _contentPanel;
+        private Panel _topBar;
+        private Label _lblPageTitle;
+        private Label _lblNetworkBadge;
+        private Label _lblModBadge;
+
+        private Panel _pageLobby;
+        private Panel _pageHost;
+        private Panel _pageSettings;
+        private Panel _pageDiag;
+        private Panel[] _pages;
+        private ModernButton[] _navButtons;
+
+        // Page 1: Lobby Controls
         private ListView _lvServers;
-        private TextBox _tbDirectIp;
-        private TextBox _tbDirectPort;
-        private TextBox _tbPlayerName;
-        private Button _btnJoinSelected;
-        private Button _btnDirectConnect;
-        private Label _lblLobbyStatus;
+        private ModernTextBox _tbPlayerName;
+        private ModernTextBox _tbDirectIp;
+        private ModernTextBox _tbDirectPort;
+        private ModernButton _btnJoinSelected;
+        private ModernButton _btnDirectConnect;
+        private ModernButton _btnRefreshLobby;
+        private Label _lblLobbyEmpty;
 
-        // Host Tab
-        private TextBox _tbHostServerName;
-        private TextBox _tbHostPlayerName;
+        // Page 2: Host Controls
+        private ModernTextBox _tbHostServerName;
+        private ModernTextBox _tbHostPlayerName;
         private NumericUpDown _nudHostPort;
-        private Button _btnStartHost;
-        private Label _lblHostStatus;
+        private CheckBox _cbHostBroadcast;
+        private CheckBox _cbHostSkipIntro;
+        private ModernButton _btnStartHost;
+        private Label _lblHostLiveStatus;
+        private Label _lblHostAddressCopy;
 
-        // Settings Tab
-        private TextBox _tbGamePath;
-        private Button _btnBrowseGame;
-        private Label _lblModStatus;
-        private Button _btnDeployMod;
-        private CheckBox _cbSkipIntro;
+        // Page 3: Settings Controls
+        private ModernTextBox _tbGamePath;
+        private ModernButton _btnBrowse;
+        private ModernButton _btnDeployMod;
+        private Label _lblSettingsModStatus;
+        private CheckBox _cbGlobalSkipIntro;
+        private ModernButton _btnOpenGameFolder;
+        private ModernButton _btnOpenLogsFolder;
+        private ModernButton _btnRedetect;
 
-        // Diagnostics Tab
-        private Button _btnCollectDiag;
-        private TextBox _tbDiagNotes;
+        // Page 4: Diagnostics Controls
+        private ModernButton _btnGenerateDiag;
+        private ModernButton _btnOpenDiagFolder;
         private Label _lblDiagStatus;
-
-        // Status bar
-        private StatusStrip _statusStrip;
-        private ToolStripStatusLabel _statusLabel;
 
         public MainForm()
         {
+            this.SetStyle(ControlStyles.AllPaintingInWmPaint |
+                           ControlStyles.UserPaint |
+                           ControlStyles.OptimizedDoubleBuffer |
+                           ControlStyles.ResizeRedraw, true);
+
+            InitializeForm();
             InitializeComponents();
             InitializeLogic();
         }
 
-        private void InitializeComponents()
+        private void InitializeForm()
         {
             this.Text = "S.T.A.L.K.E.R. Clear Sky - Co-op Launcher";
-            this.Size = new Size(720, 500);
-            this.MinimumSize = new Size(640, 440);
+            this.FormBorderStyle = FormBorderStyle.None;
+            this.Size = new Size(960, 600);
+            this.MinimumSize = new Size(900, 540);
             this.StartPosition = FormStartPosition.CenterScreen;
-            this.BackColor = Color.FromArgb(32, 34, 37);
-            this.ForeColor = Color.WhiteSmoke;
-            this.Font = new Font("Segoe UI", 9.5f, FontStyle.Regular);
-
-            // Tab Control
-            _tabControl = new TabControl();
-            _tabControl.Dock = DockStyle.Fill;
-            _tabControl.Padding = new Point(12, 6);
-
-            _tabLobby = new TabPage("Lobby / Join");
-            _tabHost = new TabPage("Host Game");
-            _tabSettings = new TabPage("Settings");
-            _tabDiagnostics = new TabPage("Diagnostics");
-
-            _tabLobby.BackColor = Color.FromArgb(40, 42, 46);
-            _tabHost.BackColor = Color.FromArgb(40, 42, 46);
-            _tabSettings.BackColor = Color.FromArgb(40, 42, 46);
-            _tabDiagnostics.BackColor = Color.FromArgb(40, 42, 46);
-
-            BuildLobbyTab();
-            BuildHostTab();
-            BuildSettingsTab();
-            BuildDiagnosticsTab();
-
-            _tabControl.TabPages.Add(_tabLobby);
-            _tabControl.TabPages.Add(_tabHost);
-            _tabControl.TabPages.Add(_tabSettings);
-            _tabControl.TabPages.Add(_tabDiagnostics);
-
-            // Status bar
-            _statusStrip = new StatusStrip();
-            _statusStrip.BackColor = Color.FromArgb(24, 25, 28);
-            _statusStrip.ForeColor = Color.LightGray;
-            _statusLabel = new ToolStripStatusLabel("Ready");
-            _statusStrip.Items.Add(_statusLabel);
-
-            this.Controls.Add(_tabControl);
-            this.Controls.Add(_statusStrip);
+            this.BackColor = Theme.BgDarkest;
+            this.ForeColor = Theme.TextPrimary;
+            this.Font = Theme.FontRegular;
         }
 
-        private void BuildLobbyTab()
+        protected override void OnPaint(PaintEventArgs e)
         {
-            TableLayoutPanel panel = new TableLayoutPanel
+            base.OnPaint(e);
+            // Draw subtle 1px border around frameless window
+            using (Pen borderPen = new Pen(Theme.Border, 1f))
+            {
+                e.Graphics.DrawRectangle(borderPen, 0, 0, Width - 1, Height - 1);
+            }
+        }
+
+        private void InitializeComponents()
+        {
+            // 1. Title bar
+            _titleBar = new TitleBarControl(this);
+            this.Controls.Add(_titleBar);
+
+            // 2. Sidebar
+            BuildSidebar();
+
+            // 3. Right Content Container
+            _contentPanel = new Panel
             {
                 Dock = DockStyle.Fill,
-                Padding = new Padding(10),
-                RowCount = 4,
-                ColumnCount = 1
+                BackColor = Theme.BgDarkest,
+                Padding = new Padding(20, 16, 20, 16)
             };
-            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 35));
-            panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 45));
-            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
 
-            // Top player name row
-            FlowLayoutPanel namePanel = new FlowLayoutPanel { Dock = DockStyle.Fill };
-            Label lblName = new Label { Text = "Your Name:", AutoSize = true, Padding = new Padding(0, 5, 5, 0) };
-            _tbPlayerName = new TextBox
+            // Top Status Bar in Content area
+            BuildTopBar();
+
+            // Build individual tab pages
+            BuildLobbyPage();
+            BuildHostPage();
+            BuildSettingsPage();
+            BuildDiagnosticsPage();
+
+            _pages = new Panel[] { _pageLobby, _pageHost, _pageSettings, _pageDiag };
+            _navButtons = new ModernButton[] { _btnNavLobby, _btnNavHost, _btnNavSettings, _btnNavDiag };
+
+            foreach (Panel p in _pages)
             {
-                Text = Environment.UserName,
-                Width = 160,
-                BackColor = Color.FromArgb(50, 52, 56),
-                ForeColor = Color.White
+                _contentPanel.Controls.Add(p);
+            }
+
+            this.Controls.Add(_contentPanel);
+            this.Controls.Add(_sidebar);
+
+            SwitchPage(0);
+        }
+
+        private void BuildSidebar()
+        {
+            _sidebar = new Panel
+            {
+                Dock = DockStyle.Left,
+                Width = 220,
+                BackColor = Theme.BgSidebar
             };
-            namePanel.Controls.Add(lblName);
-            namePanel.Controls.Add(_tbPlayerName);
+
+            // Top Faction Logo / Header
+            Panel headerPanel = new Panel
+            {
+                Dock = DockStyle.Top,
+                Height = 85,
+                BackColor = Theme.BgSidebar,
+                Padding = new Padding(18, 16, 18, 10)
+            };
+
+            Label lblFaction = new Label
+            {
+                Text = "ЧИСТОЕ НЕБО",
+                Font = new Font("Segoe UI", 12f, FontStyle.Bold),
+                ForeColor = Theme.TextPrimary,
+                Dock = DockStyle.Top,
+                Height = 26
+            };
+            Label lblSub = new Label
+            {
+                Text = "MULTIPLAYER CO-OP",
+                Font = new Font("Segoe UI", 8f, FontStyle.Bold),
+                ForeColor = Theme.AccentCyan,
+                Dock = DockStyle.Top,
+                Height = 18
+            };
+            Panel divider = new Panel
+            {
+                Dock = DockStyle.Bottom,
+                Height = 1,
+                BackColor = Theme.Border
+            };
+
+            headerPanel.Controls.Add(lblSub);
+            headerPanel.Controls.Add(lblFaction);
+            headerPanel.Controls.Add(divider);
+            _sidebar.Controls.Add(headerPanel);
+
+            // Nav Buttons Container
+            Panel navContainer = new Panel
+            {
+                Dock = DockStyle.Fill,
+                Padding = new Padding(10, 14, 10, 10)
+            };
+
+            _btnNavLobby = CreateNavButton("🌐   Lobby & Join", 0);
+            _btnNavHost = CreateNavButton("⚡   Host Server", 1);
+            _btnNavSettings = CreateNavButton("⚙️   Settings & Mod", 2);
+            _btnNavDiag = CreateNavButton("🛠️   Diagnostics", 3);
+
+            _btnNavLobby.Top = 14;
+            _btnNavHost.Top = 60;
+            _btnNavSettings.Top = 106;
+            _btnNavDiag.Top = 152;
+
+            navContainer.Controls.Add(_btnNavLobby);
+            navContainer.Controls.Add(_btnNavHost);
+            navContainer.Controls.Add(_btnNavSettings);
+            navContainer.Controls.Add(_btnNavDiag);
+            _sidebar.Controls.Add(navContainer);
+
+            // Bottom Profile / Network Card
+            Panel bottomProfile = new Panel
+            {
+                Dock = DockStyle.Bottom,
+                Height = 80,
+                BackColor = Color.FromArgb(16, 19, 24),
+                Padding = new Padding(16, 12, 16, 12)
+            };
+
+            _lblSidebarPlayer = new Label
+            {
+                Text = "👤 " + Environment.UserName,
+                Font = Theme.FontRegularBold,
+                ForeColor = Theme.TextPrimary,
+                Dock = DockStyle.Top,
+                Height = 22
+            };
+            _lblSidebarIp = new Label
+            {
+                Text = "LAN: " + _localIp,
+                Font = Theme.FontSmall,
+                ForeColor = Theme.TextSecondary,
+                Dock = DockStyle.Top,
+                Height = 18
+            };
+
+            bottomProfile.Controls.Add(_lblSidebarIp);
+            bottomProfile.Controls.Add(_lblSidebarPlayer);
+            _sidebar.Controls.Add(bottomProfile);
+        }
+
+        private ModernButton CreateNavButton(string text, int pageIndex)
+        {
+            ModernButton btn = new ModernButton
+            {
+                Text = text,
+                Variant = ButtonVariant.Nav,
+                Width = 200,
+                Height = 40,
+                Font = Theme.FontRegularBold
+            };
+            btn.Click += (s, e) => SwitchPage(pageIndex);
+            return btn;
+        }
+
+        private void BuildTopBar()
+        {
+            _topBar = new Panel
+            {
+                Dock = DockStyle.Top,
+                Height = 42,
+                BackColor = Theme.BgDarkest
+            };
+
+            _lblPageTitle = new Label
+            {
+                Text = "LOBBY & SERVER BROWSER",
+                Font = Theme.FontTitle,
+                ForeColor = Theme.TextPrimary,
+                AutoSize = true,
+                Location = new Point(0, 8)
+            };
+
+            FlowLayoutPanel badgePanel = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Right,
+                AutoSize = true,
+                FlowDirection = FlowDirection.LeftToRight
+            };
+
+            _lblNetworkBadge = new Label
+            {
+                Text = "● LAN Beacon: 27015",
+                Font = Theme.FontBadge,
+                ForeColor = Theme.AccentGreen,
+                BackColor = Color.FromArgb(20, 45, 35),
+                Padding = new Padding(8, 4, 8, 4),
+                Margin = new Padding(0, 6, 8, 0),
+                AutoSize = true
+            };
+
+            _lblModBadge = new Label
+            {
+                Text = "Checking Mod...",
+                Font = Theme.FontBadge,
+                ForeColor = Theme.AccentAmber,
+                BackColor = Color.FromArgb(45, 38, 20),
+                Padding = new Padding(8, 4, 8, 4),
+                Margin = new Padding(0, 6, 0, 0),
+                AutoSize = true
+            };
+
+            badgePanel.Controls.Add(_lblNetworkBadge);
+            badgePanel.Controls.Add(_lblModBadge);
+
+            _topBar.Controls.Add(_lblPageTitle);
+            _topBar.Controls.Add(badgePanel);
+            _contentPanel.Controls.Add(_topBar);
+        }
+
+        private void SwitchPage(int index)
+        {
+            for (int i = 0; i < _pages.Length; i++)
+            {
+                bool active = (i == index);
+                _pages[i].Visible = active;
+                _navButtons[i].IsActiveNav = active;
+            }
+
+            switch (index)
+            {
+                case 0: _lblPageTitle.Text = "LOBBY & SERVER BROWSER"; break;
+                case 1: _lblPageTitle.Text = "HOST CO-OP CAMPAIGN"; break;
+                case 2: _lblPageTitle.Text = "SETTINGS & MOD INSTALLATION"; break;
+                case 3: _lblPageTitle.Text = "DIAGNOSTICS & SYSTEM REPORT"; break;
+            }
+        }
+
+        private void BuildLobbyPage()
+        {
+            _pageLobby = new Panel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = Theme.BgDarkest,
+                Padding = new Padding(0, 10, 0, 0)
+            };
+
+            // Main Server List Card
+            ModernCard serverCard = new ModernCard
+            {
+                Dock = DockStyle.Fill,
+                Title = "Available LAN Co-op Sessions",
+                Subtitle = "Servers broadcasting on UDP port 27015"
+            };
 
             // Server ListView
             _lvServers = new ListView
             {
-                Dock = DockStyle.Fill,
                 View = View.Details,
                 FullRowSelect = true,
-                GridLines = true,
-                BackColor = Color.FromArgb(48, 50, 54),
-                ForeColor = Color.White
+                GridLines = false,
+                BorderStyle = BorderStyle.None,
+                BackColor = Theme.BgCard,
+                ForeColor = Theme.TextPrimary,
+                Font = Theme.FontRegular,
+                Dock = DockStyle.Fill
             };
-            _lvServers.Columns.Add("Server Name", 180);
-            _lvServers.Columns.Add("Host", 110);
-            _lvServers.Columns.Add("Level", 100);
-            _lvServers.Columns.Add("Players", 70);
-            _lvServers.Columns.Add("Address", 140);
+            EnableDoubleBuffer(_lvServers);
+
+            _lvServers.Columns.Add("Server Name", 240);
+            _lvServers.Columns.Add("Host Stalker", 130);
+            _lvServers.Columns.Add("Location", 120);
+            _lvServers.Columns.Add("Players", 80);
+            _lvServers.Columns.Add("Address (IP:Port)", 140);
             _lvServers.DoubleClick += (s, e) => JoinSelectedServer();
 
-            // Direct Connect row
-            FlowLayoutPanel directPanel = new FlowLayoutPanel { Dock = DockStyle.Fill };
-            Label lblDirect = new Label { Text = "Direct IP:", AutoSize = true, Padding = new Padding(0, 5, 5, 0) };
-            _tbDirectIp = new TextBox { Text = "127.0.0.1", Width = 140, BackColor = Color.FromArgb(50, 52, 56), ForeColor = Color.White };
-            Label lblPort = new Label { Text = "Port:", AutoSize = true, Padding = new Padding(10, 5, 5, 0) };
-            _tbDirectPort = new TextBox { Text = "27016", Width = 60, BackColor = Color.FromArgb(50, 52, 56), ForeColor = Color.White };
-            _btnDirectConnect = new Button
+            _lblLobbyEmpty = new Label
             {
-                Text = "Connect Direct",
-                Width = 120,
-                Height = 28,
-                BackColor = Color.FromArgb(70, 75, 85),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat
+                Text = "Listening for co-op games on your local network...\n\nHost a game on PC 1, or use Direct Connect below.",
+                Font = Theme.FontRegular,
+                ForeColor = Theme.TextMuted,
+                TextAlign = ContentAlignment.MiddleCenter,
+                Dock = DockStyle.Fill,
+                BackColor = Theme.BgCard
             };
-            _btnDirectConnect.Click += (s, e) => JoinDirectServer();
 
-            _btnJoinSelected = new Button
+            Panel listContainer = new Panel { Dock = DockStyle.Fill, Padding = new Padding(0, 48, 0, 50) };
+            listContainer.Controls.Add(_lblLobbyEmpty);
+            listContainer.Controls.Add(_lvServers);
+
+            // Action row below list
+            Panel listActionRow = new Panel
             {
-                Text = "Join Selected",
-                Width = 130,
-                Height = 28,
-                BackColor = Color.FromArgb(46, 125, 50),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat
+                Dock = DockStyle.Bottom,
+                Height = 44,
+                Padding = new Padding(0, 6, 0, 0)
+            };
+
+            Label lblNick = new Label
+            {
+                Text = "Your Name:",
+                Font = Theme.FontRegularBold,
+                ForeColor = Theme.TextSecondary,
+                AutoSize = true,
+                Location = new Point(0, 12)
+            };
+
+            _tbPlayerName = new ModernTextBox
+            {
+                Text = Environment.UserName,
+                Width = 160,
+                Height = 34,
+                Location = new Point(85, 4)
+            };
+
+            _btnRefreshLobby = new ModernButton
+            {
+                Text = "🔄 Refresh",
+                Width = 100,
+                Height = 34,
+                Location = new Point(255, 4),
+                Variant = ButtonVariant.Secondary
+            };
+            _btnRefreshLobby.Click += (s, e) => RefreshLobbyServers();
+
+            _btnJoinSelected = new ModernButton
+            {
+                Text = "▶   JOIN SELECTED SERVER",
+                Width = 220,
+                Height = 34,
+                Anchor = AnchorStyles.Top | AnchorStyles.Right,
+                Location = new Point(serverCard.Width - 236, 4),
+                Variant = ButtonVariant.PrimaryCyan,
+                Font = Theme.FontSubtitle
             };
             _btnJoinSelected.Click += (s, e) => JoinSelectedServer();
 
-            directPanel.Controls.Add(lblDirect);
-            directPanel.Controls.Add(_tbDirectIp);
-            directPanel.Controls.Add(lblPort);
-            directPanel.Controls.Add(_tbDirectPort);
-            directPanel.Controls.Add(_btnDirectConnect);
-            directPanel.Controls.Add(_btnJoinSelected);
+            listActionRow.Controls.Add(lblNick);
+            listActionRow.Controls.Add(_tbPlayerName);
+            listActionRow.Controls.Add(_btnRefreshLobby);
+            listActionRow.Controls.Add(_btnJoinSelected);
 
-            _lblLobbyStatus = new Label
+            serverCard.Controls.Add(listContainer);
+            serverCard.Controls.Add(listActionRow);
+
+            // Bottom Direct Connect Card
+            ModernCard directCard = new ModernCard
             {
-                Text = "Listening for LAN co-op lobbies on port 27015...",
-                Dock = DockStyle.Fill,
-                ForeColor = Color.LightSteelBlue
+                Dock = DockStyle.Bottom,
+                Height = 100,
+                Title = "Direct IP Connection",
+                Subtitle = "Connect directly to a server by IP and port"
             };
 
-            panel.Controls.Add(namePanel, 0, 0);
-            panel.Controls.Add(_lvServers, 0, 1);
-            panel.Controls.Add(directPanel, 0, 2);
-            panel.Controls.Add(_lblLobbyStatus, 0, 3);
+            FlowLayoutPanel directInputs = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Bottom,
+                Height = 46,
+                Padding = new Padding(0, 6, 0, 0)
+            };
 
-            _tabLobby.Controls.Add(panel);
+            Label lblIp = new Label { Text = "IP:", Font = Theme.FontRegularBold, ForeColor = Theme.TextSecondary, AutoSize = true, Margin = new Padding(0, 8, 4, 0) };
+            _tbDirectIp = new ModernTextBox { Text = "127.0.0.1", Width = 150, Height = 32 };
+            Label lblPort = new Label { Text = "Port:", Font = Theme.FontRegularBold, ForeColor = Theme.TextSecondary, AutoSize = true, Margin = new Padding(12, 8, 4, 0) };
+            _tbDirectPort = new ModernTextBox { Text = "27016", Width = 70, Height = 32 };
+
+            _btnDirectConnect = new ModernButton
+            {
+                Text = "⚡ Connect Direct",
+                Width = 150,
+                Height = 32,
+                Margin = new Padding(16, 0, 0, 0),
+                Variant = ButtonVariant.Secondary
+            };
+            _btnDirectConnect.Click += (s, e) => JoinDirectServer();
+
+            directInputs.Controls.Add(lblIp);
+            directInputs.Controls.Add(_tbDirectIp);
+            directInputs.Controls.Add(lblPort);
+            directInputs.Controls.Add(_tbDirectPort);
+            directInputs.Controls.Add(_btnDirectConnect);
+
+            directCard.Controls.Add(directInputs);
+
+            _pageLobby.Controls.Add(serverCard);
+            _pageLobby.Controls.Add(directCard);
         }
 
-        private void BuildHostTab()
+        private void BuildHostPage()
         {
-            TableLayoutPanel panel = new TableLayoutPanel
+            _pageHost = new Panel
             {
                 Dock = DockStyle.Fill,
-                Padding = new Padding(25),
-                RowCount = 6,
-                ColumnCount = 2
+                BackColor = Theme.BgDarkest,
+                Padding = new Padding(0, 10, 0, 0)
             };
-            panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 140));
-            panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 
-            for (int i = 0; i < 5; i++) panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
-            panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            ModernCard configCard = new ModernCard
+            {
+                Dock = DockStyle.Fill,
+                Title = "Campaign Host Configuration",
+                Subtitle = "Start a synchronized cooperative story campaign"
+            };
 
-            // Server Name
-            panel.Controls.Add(new Label { Text = "Server Name:", AutoSize = true, Padding = new Padding(0, 6, 0, 0) }, 0, 0);
-            _tbHostServerName = new TextBox
+            TableLayoutPanel table = new TableLayoutPanel
+            {
+                Dock = DockStyle.Top,
+                Height = 240,
+                RowCount = 5,
+                ColumnCount = 2,
+                Padding = new Padding(0, 48, 0, 0)
+            };
+            table.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 160));
+            table.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+
+            for (int i = 0; i < 4; i++) table.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+            table.RowStyles.Add(new RowStyle(SizeType.Absolute, 45));
+
+            // Row 0: Server Name
+            table.Controls.Add(new Label { Text = "Session Name:", Font = Theme.FontRegularBold, ForeColor = Theme.TextSecondary, Padding = new Padding(0, 6, 0, 0) }, 0, 0);
+            _tbHostServerName = new ModernTextBox
             {
                 Text = Environment.UserName + "'s Clear Sky Campaign",
-                Width = 320,
-                BackColor = Color.FromArgb(50, 52, 56),
-                ForeColor = Color.White
+                Width = 360,
+                Height = 32
             };
-            panel.Controls.Add(_tbHostServerName, 1, 0);
+            table.Controls.Add(_tbHostServerName, 1, 0);
 
-            // Player Name
-            panel.Controls.Add(new Label { Text = "Host Player Name:", AutoSize = true, Padding = new Padding(0, 6, 0, 0) }, 0, 1);
-            _tbHostPlayerName = new TextBox
+            // Row 1: Host Name
+            table.Controls.Add(new Label { Text = "Host Nickname:", Font = Theme.FontRegularBold, ForeColor = Theme.TextSecondary, Padding = new Padding(0, 6, 0, 0) }, 0, 1);
+            _tbHostPlayerName = new ModernTextBox
             {
                 Text = Environment.UserName,
-                Width = 200,
-                BackColor = Color.FromArgb(50, 52, 56),
-                ForeColor = Color.White
+                Width = 220,
+                Height = 32
             };
-            panel.Controls.Add(_tbHostPlayerName, 1, 1);
+            table.Controls.Add(_tbHostPlayerName, 1, 1);
 
-            // Port
-            panel.Controls.Add(new Label { Text = "Game Port (UDP):", AutoSize = true, Padding = new Padding(0, 6, 0, 0) }, 0, 2);
+            // Row 2: Port
+            table.Controls.Add(new Label { Text = "Game Port (UDP):", Font = Theme.FontRegularBold, ForeColor = Theme.TextSecondary, Padding = new Padding(0, 6, 0, 0) }, 0, 2);
             _nudHostPort = new NumericUpDown
             {
                 Minimum = 1024,
                 Maximum = 65535,
                 Value = 27016,
                 Width = 100,
-                BackColor = Color.FromArgb(50, 52, 56),
-                ForeColor = Color.White
+                BackColor = Theme.BgInput,
+                ForeColor = Theme.TextPrimary,
+                Font = Theme.FontRegular
             };
-            panel.Controls.Add(_nudHostPort, 1, 2);
+            table.Controls.Add(_nudHostPort, 1, 2);
 
-            // Start Host Button
-            _btnStartHost = new Button
+            // Row 3: Checkboxes
+            table.Controls.Add(new Label { Text = "Options:", Font = Theme.FontRegularBold, ForeColor = Theme.TextSecondary, Padding = new Padding(0, 6, 0, 0) }, 0, 3);
+            FlowLayoutPanel checkPanel = new FlowLayoutPanel { Dock = DockStyle.Fill };
+            _cbHostBroadcast = new CheckBox
             {
-                Text = "Start Co-op Host",
-                Width = 180,
-                Height = 35,
-                BackColor = Color.FromArgb(46, 125, 50),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-                Font = new Font("Segoe UI", 10.5f, FontStyle.Bold)
+                Text = "Broadcast lobby on LAN (UDP 27015)",
+                Checked = true,
+                AutoSize = true,
+                ForeColor = Theme.TextPrimary,
+                Font = Theme.FontRegular,
+                Margin = new Padding(0, 6, 16, 0)
+            };
+            _cbHostSkipIntro = new CheckBox
+            {
+                Text = "Skip introductory cutscenes (-nogameintro)",
+                Checked = false,
+                AutoSize = true,
+                ForeColor = Theme.TextSecondary,
+                Font = Theme.FontRegular,
+                Margin = new Padding(0, 6, 0, 0)
+            };
+            checkPanel.Controls.Add(_cbHostBroadcast);
+            checkPanel.Controls.Add(_cbHostSkipIntro);
+            table.Controls.Add(checkPanel, 1, 3);
+
+            // Row 4: Start Button
+            _btnStartHost = new ModernButton
+            {
+                Text = "🚀   START CO-OP HOST",
+                Width = 240,
+                Height = 44,
+                Variant = ButtonVariant.PrimaryGreen,
+                Font = Theme.FontHeroBtn
             };
             _btnStartHost.Click += (s, e) => StartHostingSession();
-            panel.Controls.Add(_btnStartHost, 1, 3);
+            table.Controls.Add(_btnStartHost, 1, 4);
 
-            _lblHostStatus = new Label
+            // Bottom Live Info Card
+            ModernCard liveCard = new ModernCard
             {
-                Text = "Clicking Start Host launches Clear Sky and broadcasts lobby on LAN automatically.",
-                AutoSize = true,
-                ForeColor = Color.LightGray,
-                Padding = new Padding(0, 8, 0, 0)
+                Dock = DockStyle.Bottom,
+                Height = 130,
+                Title = "Live Session Information",
+                Subtitle = "Details to share with your co-op partner"
             };
-            panel.Controls.Add(_lblHostStatus, 1, 4);
 
-            _tabHost.Controls.Add(panel);
+            _lblHostLiveStatus = new Label
+            {
+                Text = "Host is currently idle. Click 'Start Co-op Host' above to launch Clear Sky.",
+                Font = Theme.FontRegular,
+                ForeColor = Theme.TextSecondary,
+                Location = new Point(16, 50),
+                AutoSize = true
+            };
+
+            _lblHostAddressCopy = new Label
+            {
+                Text = string.Format("Your LAN Join Address: {0}:27016 (Tell your partner to enter this in Direct IP)", _localIp),
+                Font = Theme.FontRegularBold,
+                ForeColor = Theme.AccentCyan,
+                Location = new Point(16, 80),
+                AutoSize = true,
+                Cursor = Cursors.Hand
+            };
+            _lblHostAddressCopy.Click += (s, e) =>
+            {
+                Clipboard.SetText(string.Format("{0}:{1}", _localIp, (int)_nudHostPort.Value));
+                MessageBox.Show("Server IP and port copied to clipboard!", "Address Copied", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            };
+
+            liveCard.Controls.Add(_lblHostLiveStatus);
+            liveCard.Controls.Add(_lblHostAddressCopy);
+
+            configCard.Controls.Add(table);
+            _pageHost.Controls.Add(configCard);
+            _pageHost.Controls.Add(liveCard);
         }
 
-        private void BuildSettingsTab()
+        private void BuildSettingsPage()
         {
-            TableLayoutPanel panel = new TableLayoutPanel
+            _pageSettings = new Panel
             {
                 Dock = DockStyle.Fill,
-                Padding = new Padding(20),
-                RowCount = 5,
-                ColumnCount = 2
+                BackColor = Theme.BgDarkest,
+                Padding = new Padding(0, 10, 0, 0)
             };
-            panel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 130));
-            panel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 
-            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 45));
-            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
-            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 45));
-            panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            ModernCard pathCard = new ModernCard
+            {
+                Dock = DockStyle.Top,
+                Height = 220,
+                Title = "Game Installation & Co-op Mod Setup",
+                Subtitle = "Locate S.T.A.L.K.E.R.: Clear Sky and deploy x64 mod files"
+            };
 
-            // Game Path
-            panel.Controls.Add(new Label { Text = "Game Path:", AutoSize = true, Padding = new Padding(0, 6, 0, 0) }, 0, 0);
-            FlowLayoutPanel pathRow = new FlowLayoutPanel { Dock = DockStyle.Fill };
-            _tbGamePath = new TextBox { Width = 380, BackColor = Color.FromArgb(50, 52, 56), ForeColor = Color.White };
+            Label lblPath = new Label
+            {
+                Text = "Game Root Directory (contains fsgame.ltx):",
+                Font = Theme.FontRegularBold,
+                ForeColor = Theme.TextSecondary,
+                Location = new Point(16, 50),
+                AutoSize = true
+            };
+
+            _tbGamePath = new ModernTextBox
+            {
+                Location = new Point(16, 75),
+                Width = 520,
+                Height = 34
+            };
             _tbGamePath.TextChanged += (s, e) => UpdateModStatus();
-            _btnBrowseGame = new Button
+
+            _btnBrowse = new ModernButton
             {
                 Text = "Browse...",
                 Width = 90,
-                Height = 26,
-                BackColor = Color.FromArgb(70, 75, 85),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat
+                Height = 34,
+                Location = new Point(545, 75),
+                Variant = ButtonVariant.Secondary
             };
-            _btnBrowseGame.Click += (s, e) => BrowseGamePath();
-            pathRow.Controls.Add(_tbGamePath);
-            pathRow.Controls.Add(_btnBrowseGame);
-            panel.Controls.Add(pathRow, 1, 0);
+            _btnBrowse.Click += (s, e) => BrowseGamePath();
 
-            // Mod Status
-            panel.Controls.Add(new Label { Text = "Mod Status:", AutoSize = true, Padding = new Padding(0, 6, 0, 0) }, 0, 1);
-            _lblModStatus = new Label { Text = "Checking...", AutoSize = true, Padding = new Padding(0, 6, 0, 0) };
-            panel.Controls.Add(_lblModStatus, 1, 1);
-
-            // Deploy button
-            _btnDeployMod = new Button
+            _btnRedetect = new ModernButton
             {
-                Text = "Install / Deploy Mod Files",
-                Width = 200,
-                Height = 30,
-                BackColor = Color.FromArgb(30, 136, 229),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat
+                Text = "🔄 Auto-Detect",
+                Width = 120,
+                Height = 34,
+                Location = new Point(645, 75),
+                Variant = ButtonVariant.Secondary
             };
-            _btnDeployMod.Click += (s, e) => DeployModFiles();
-            panel.Controls.Add(_btnDeployMod, 1, 2);
+            _btnRedetect.Click += (s, e) => ReDetectGame();
 
-            // Skip Intro Checkbox
-            _cbSkipIntro = new CheckBox
+            _lblSettingsModStatus = new Label
             {
-                Text = "Skip introductory story / cutscene (-nogameintro)",
-                AutoSize = true,
-                Checked = false,
-                ForeColor = Color.LightGray,
-                Padding = new Padding(0, 10, 0, 0)
-            };
-            panel.Controls.Add(_cbSkipIntro, 1, 3);
-
-            _tabSettings.Controls.Add(panel);
-        }
-
-        private void BuildDiagnosticsTab()
-        {
-            TableLayoutPanel panel = new TableLayoutPanel
-            {
-                Dock = DockStyle.Fill,
-                Padding = new Padding(20),
-                RowCount = 5,
-                ColumnCount = 1
-            };
-            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 45));
-            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 70));
-            panel.RowStyles.Add(new RowStyle(SizeType.Absolute, 45));
-            panel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-
-            Label lblTitle = new Label
-            {
-                Text = "One-Click Diagnostic Pack Generator",
-                Font = new Font("Segoe UI", 11f, FontStyle.Bold),
+                Text = "Checking status...",
+                Font = Theme.FontRegularBold,
+                ForeColor = Theme.AccentAmber,
+                Location = new Point(16, 122),
                 AutoSize = true
             };
-            panel.Controls.Add(lblTitle, 0, 0);
+
+            _btnDeployMod = new ModernButton
+            {
+                Text = "🛠️   INSTALL / DEPLOY MOD FILES",
+                Width = 260,
+                Height = 38,
+                Location = new Point(16, 155),
+                Variant = ButtonVariant.PrimaryCyan
+            };
+            _btnDeployMod.Click += (s, e) => DeployModFiles();
+
+            pathCard.Controls.Add(lblPath);
+            pathCard.Controls.Add(_tbGamePath);
+            pathCard.Controls.Add(_btnBrowse);
+            pathCard.Controls.Add(_btnRedetect);
+            pathCard.Controls.Add(_lblSettingsModStatus);
+            pathCard.Controls.Add(_btnDeployMod);
+
+            ModernCard prefCard = new ModernCard
+            {
+                Dock = DockStyle.Fill,
+                Title = "Preferences & Shortcuts",
+                Subtitle = "Convenience tools and game file access"
+            };
+
+            _cbGlobalSkipIntro = new CheckBox
+            {
+                Text = "Skip introductory storyline cutscenes & video (-nogameintro)",
+                Checked = false,
+                AutoSize = true,
+                ForeColor = Theme.TextPrimary,
+                Font = Theme.FontRegular,
+                Location = new Point(16, 55)
+            };
+
+            _btnOpenGameFolder = new ModernButton
+            {
+                Text = "📂 Open Game Folder",
+                Width = 170,
+                Height = 34,
+                Location = new Point(16, 95),
+                Variant = ButtonVariant.Secondary
+            };
+            _btnOpenGameFolder.Click += (s, e) => OpenGameFolder();
+
+            _btnOpenLogsFolder = new ModernButton
+            {
+                Text = "📂 Open Logs & Saves",
+                Width = 170,
+                Height = 34,
+                Location = new Point(196, 95),
+                Variant = ButtonVariant.Secondary
+            };
+            _btnOpenLogsFolder.Click += (s, e) => OpenLogsFolder();
+
+            prefCard.Controls.Add(_cbGlobalSkipIntro);
+            prefCard.Controls.Add(_btnOpenGameFolder);
+            prefCard.Controls.Add(_btnOpenLogsFolder);
+
+            _pageSettings.Controls.Add(prefCard);
+            _pageSettings.Controls.Add(pathCard);
+        }
+
+        private void BuildDiagnosticsPage()
+        {
+            _pageDiag = new Panel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = Theme.BgDarkest,
+                Padding = new Padding(0, 10, 0, 0)
+            };
+
+            ModernCard card = new ModernCard
+            {
+                Dock = DockStyle.Fill,
+                Title = "One-Click Diagnostic Pack Generator",
+                Subtitle = "Compresses logs, crash dumps, and saves into a single ZIP for instant bug reporting"
+            };
 
             Label lblDesc = new Label
             {
-                Text = "Collects engine logs, crash dumps, savegames, user configs, and system details into a single ZIP archive for fast bug reporting and 1-run reproduction.",
-                Dock = DockStyle.Fill,
-                ForeColor = Color.LightGray
+                Text = "If you or your friend encounter any desync, crash, or unexpected behavior during gameplay,\n" +
+                       "click the button below. A complete diagnostic ZIP containing latest logs, crash dumps (.mdmp),\n" +
+                       "user settings, and save files will be generated.",
+                Font = Theme.FontRegular,
+                ForeColor = Theme.TextSecondary,
+                Location = new Point(16, 50),
+                AutoSize = true
             };
-            panel.Controls.Add(lblDesc, 0, 1);
 
-            FlowLayoutPanel btnRow = new FlowLayoutPanel { Dock = DockStyle.Fill };
-            _btnCollectDiag = new Button
+            _btnGenerateDiag = new ModernButton
             {
-                Text = "Generate Diagnostic ZIP",
-                Width = 200,
-                Height = 32,
-                BackColor = Color.FromArgb(92, 107, 115),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat
+                Text = "📦   GENERATE DIAGNOSTIC ZIP",
+                Width = 260,
+                Height = 40,
+                Location = new Point(16, 120),
+                Variant = ButtonVariant.PrimaryCyan,
+                Font = Theme.FontSubtitle
             };
-            _btnCollectDiag.Click += (s, e) => CollectDiagnostics();
-            _lblDiagStatus = new Label { Text = "", AutoSize = true, Padding = new Padding(10, 8, 0, 0), ForeColor = Color.LimeGreen };
-            btnRow.Controls.Add(_btnCollectDiag);
-            btnRow.Controls.Add(_lblDiagStatus);
-            panel.Controls.Add(btnRow, 0, 2);
+            _btnGenerateDiag.Click += (s, e) => CollectDiagnostics();
 
-            _tabDiagnostics.Controls.Add(panel);
+            _btnOpenDiagFolder = new ModernButton
+            {
+                Text = "📂 Open diagnostics/ Folder",
+                Width = 220,
+                Height = 40,
+                Location = new Point(286, 120),
+                Variant = ButtonVariant.Secondary,
+                Visible = false
+            };
+            _btnOpenDiagFolder.Click += (s, e) =>
+            {
+                string diagDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "diagnostics");
+                if (Directory.Exists(diagDir)) Process.Start("explorer.exe", diagDir);
+            };
+
+            _lblDiagStatus = new Label
+            {
+                Text = "Ready to generate.",
+                Font = Theme.FontRegularBold,
+                ForeColor = Theme.TextSecondary,
+                Location = new Point(16, 175),
+                AutoSize = true
+            };
+
+            card.Controls.Add(lblDesc);
+            card.Controls.Add(_btnGenerateDiag);
+            card.Controls.Add(_btnOpenDiagFolder);
+            card.Controls.Add(_lblDiagStatus);
+
+            _pageDiag.Controls.Add(card);
         }
 
         private void InitializeLogic()
         {
+            _localIp = NetworkHelper.GetLocalIpAddress();
+            _lblSidebarIp.Text = "LAN: " + _localIp;
+
             // Auto-detect game
             _gamePath = GameLocator.DetectGamePath();
             if (!string.IsNullOrEmpty(_gamePath))
             {
                 _tbGamePath.Text = _gamePath;
                 UpdateModStatus();
-                _statusLabel.Text = "Game detected: " + _gamePath;
             }
             else
             {
-                _statusLabel.Text = "Game not automatically detected. Please specify path in Settings.";
+                _lblSettingsModStatus.Text = "Game not automatically detected. Please browse for game folder.";
+                _lblSettingsModStatus.ForeColor = Theme.AccentAmber;
             }
 
             // Start LAN Lobby Beacon listener
@@ -417,20 +854,29 @@ namespace ClearSkyCoop.Launcher
             string norm = ModDeployer.NormalizeGamePath(_tbGamePath.Text);
             if (string.IsNullOrEmpty(norm))
             {
-                _lblModStatus.Text = "No game folder selected.";
-                _lblModStatus.ForeColor = Color.OrangeRed;
+                _lblSettingsModStatus.Text = "No game folder selected.";
+                _lblSettingsModStatus.ForeColor = Theme.AccentRed;
+                _lblModBadge.Text = "No Game Path";
+                _lblModBadge.ForeColor = Theme.AccentRed;
+                _lblModBadge.BackColor = Color.FromArgb(45, 20, 20);
                 return;
             }
 
             if (ModDeployer.IsModInstalled(norm))
             {
-                _lblModStatus.Text = "Installed and ready (OpenXRay x64 binaries present)";
-                _lblModStatus.ForeColor = Color.LightGreen;
+                _lblSettingsModStatus.Text = "✔ Mod files installed (OpenXRay x64 binaries present)";
+                _lblSettingsModStatus.ForeColor = Theme.AccentGreen;
+                _lblModBadge.Text = "✔ Game & Mod Ready";
+                _lblModBadge.ForeColor = Theme.AccentGreen;
+                _lblModBadge.BackColor = Color.FromArgb(20, 45, 35);
             }
             else
             {
-                _lblModStatus.Text = "Mod binaries missing in game folder. Click 'Install / Deploy Mod Files' below.";
-                _lblModStatus.ForeColor = Color.Orange;
+                _lblSettingsModStatus.Text = "⚠ Mod binaries missing. Click 'Install / Deploy Mod Files' below.";
+                _lblSettingsModStatus.ForeColor = Theme.AccentAmber;
+                _lblModBadge.Text = "⚠ Mod Missing";
+                _lblModBadge.ForeColor = Theme.AccentAmber;
+                _lblModBadge.BackColor = Color.FromArgb(45, 38, 20);
             }
         }
 
@@ -441,6 +887,8 @@ namespace ClearSkyCoop.Launcher
                 this.BeginInvoke(new Action<LobbyServerInfo>(OnLobbyServerUpdated), server);
                 return;
             }
+
+            _lblLobbyEmpty.Visible = false;
 
             string key = server.IP + ":" + server.Port;
             ListViewItem item = null;
@@ -487,6 +935,17 @@ namespace ClearSkyCoop.Launcher
                     _lvServers.Items.RemoveAt(i);
                 }
             }
+
+            if (_lvServers.Items.Count == 0)
+            {
+                _lblLobbyEmpty.Visible = true;
+            }
+        }
+
+        private void RefreshLobbyServers()
+        {
+            _lvServers.Items.Clear();
+            _lblLobbyEmpty.Visible = true;
         }
 
         private void JoinSelectedServer()
@@ -513,11 +972,9 @@ namespace ClearSkyCoop.Launcher
         {
             string ip = _tbDirectIp.Text.Trim();
             int port;
-            if (!int.TryParse(_tbDirectPort.Text.Trim(), out port)) port = 27016;
-
-            if (string.IsNullOrEmpty(ip))
+            if (!int.TryParse(_tbDirectPort.Text.Trim(), out port))
             {
-                MessageBox.Show("Please enter a valid IP address.", "Invalid IP", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                MessageBox.Show("Please enter a valid numeric UDP port (e.g. 27016).", "Invalid Port", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return;
             }
 
@@ -531,17 +988,17 @@ namespace ClearSkyCoop.Launcher
             {
                 MessageBox.Show("Mod files are not installed in the game directory. Please install them first under Settings tab.",
                     "Mod Not Installed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                _tabControl.SelectedTab = _tabSettings;
+                SwitchPage(2);
                 return;
             }
 
             string playerName = _tbPlayerName.Text.Trim();
             string error;
-            bool skipIntro = _cbSkipIntro != null && _cbSkipIntro.Checked;
+            bool skipIntro = _cbGlobalSkipIntro != null && _cbGlobalSkipIntro.Checked;
             Process proc = SessionLauncher.StartClient(gamePath, ip, port, playerName, skipIntro, out error);
             if (proc != null)
             {
-                _statusLabel.Text = string.Format("Connecting to {0}:{1} as '{2}'...", ip, port, playerName);
+                _lblNetworkBadge.Text = string.Format("● Connected to {0}:{1}", ip, port);
             }
             else
             {
@@ -556,7 +1013,7 @@ namespace ClearSkyCoop.Launcher
             {
                 MessageBox.Show("Mod files are not installed in the game directory. Please install them first under Settings tab.",
                     "Mod Not Installed", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                _tabControl.SelectedTab = _tabSettings;
+                SwitchPage(2);
                 return;
             }
 
@@ -565,25 +1022,29 @@ namespace ClearSkyCoop.Launcher
             string hostName = _tbHostPlayerName.Text.Trim();
 
             string error;
-            bool skipIntro = _cbSkipIntro != null && _cbSkipIntro.Checked;
+            bool skipIntro = (_cbHostSkipIntro != null && _cbHostSkipIntro.Checked) ||
+                             (_cbGlobalSkipIntro != null && _cbGlobalSkipIntro.Checked);
             Process proc = SessionLauncher.StartHost(gamePath, port, skipIntro, out error);
             if (proc != null)
             {
-                _statusLabel.Text = string.Format("Host running on port {0}. Broadcasting lobby beacon...", port);
-
                 // Start advertising on LAN
-                LobbyServerInfo hostInfo = new LobbyServerInfo
+                if (_cbHostBroadcast.Checked)
                 {
-                    ServerName = serverName,
-                    HostName = hostName,
-                    Port = port,
-                    Level = "marsh",
-                    CurrentPlayers = 1,
-                    MaxPlayers = 4
-                };
-                _beaconService.StartBroadcaster(hostInfo);
-                _lblHostStatus.Text = string.Format("Hosting active on port {0}. Beacon broadcast is active.", port);
-                _lblHostStatus.ForeColor = Color.LightGreen;
+                    LobbyServerInfo hostInfo = new LobbyServerInfo
+                    {
+                        ServerName = serverName,
+                        HostName = hostName,
+                        Port = port,
+                        Level = "marsh",
+                        CurrentPlayers = 1,
+                        MaxPlayers = 4
+                    };
+                    _beaconService.StartBroadcaster(hostInfo);
+                }
+
+                _lblHostLiveStatus.Text = string.Format("🟢 HOST RUNNING on port {0}. Game launched successfully.", port);
+                _lblHostLiveStatus.ForeColor = Theme.AccentGreen;
+                _lblHostAddressCopy.Text = string.Format("Your LAN Join Address: {0}:{1} (Click to copy for friend)", _localIp, port);
             }
             else
             {
@@ -601,6 +1062,21 @@ namespace ClearSkyCoop.Launcher
                     _tbGamePath.Text = ModDeployer.NormalizeGamePath(fbd.SelectedPath);
                     UpdateModStatus();
                 }
+            }
+        }
+
+        private void ReDetectGame()
+        {
+            string path = GameLocator.DetectGamePath();
+            if (!string.IsNullOrEmpty(path))
+            {
+                _tbGamePath.Text = path;
+                UpdateModStatus();
+                MessageBox.Show("Game detected at:\n" + path, "Game Found", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            else
+            {
+                MessageBox.Show("Could not automatically locate Clear Sky. Please select the folder manually.", "Not Found", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }
         }
 
@@ -626,15 +1102,40 @@ namespace ClearSkyCoop.Launcher
             }
         }
 
+        private void OpenGameFolder()
+        {
+            string p = ModDeployer.NormalizeGamePath(_tbGamePath.Text);
+            if (!string.IsNullOrEmpty(p) && Directory.Exists(p))
+            {
+                Process.Start("explorer.exe", p);
+            }
+            else
+            {
+                MessageBox.Show("Invalid or non-existent game directory.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+        }
+
+        private void OpenLogsFolder()
+        {
+            string p = ModDeployer.NormalizeGamePath(_tbGamePath.Text);
+            if (!string.IsNullOrEmpty(p) && Directory.Exists(p))
+            {
+                string logs = Path.Combine(p, @"_appdata_\logs");
+                if (!Directory.Exists(logs)) Directory.CreateDirectory(logs);
+                Process.Start("explorer.exe", logs);
+            }
+        }
+
         private void CollectDiagnostics()
         {
             try
             {
-                _lblDiagStatus.Text = "Collecting diagnostics...";
+                _lblDiagStatus.Text = "Collecting diagnostics (logs, dumps, saves)...";
+                _lblDiagStatus.ForeColor = Theme.AccentAmber;
+
                 string scriptPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, @"scripts\collect_diagnostics.ps1");
                 if (!File.Exists(scriptPath))
                 {
-                    // Search in parent
                     string root = Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, @"..\.."));
                     scriptPath = Path.Combine(root, @"scripts\collect_diagnostics.ps1");
                 }
@@ -650,17 +1151,33 @@ namespace ClearSkyCoop.Launcher
                     };
                     Process p = Process.Start(psi);
                     p.WaitForExit();
-                    _lblDiagStatus.Text = "Diagnostic pack generated in diagnostics/ folder!";
+
+                    _lblDiagStatus.Text = "✔ Diagnostic pack generated successfully in diagnostics/ folder!";
+                    _lblDiagStatus.ForeColor = Theme.AccentGreen;
+                    _btnOpenDiagFolder.Visible = true;
                 }
                 else
                 {
                     _lblDiagStatus.Text = "Diagnostic script not found at " + scriptPath;
+                    _lblDiagStatus.ForeColor = Theme.AccentRed;
                 }
             }
             catch (Exception ex)
             {
                 _lblDiagStatus.Text = "Error: " + ex.Message;
+                _lblDiagStatus.ForeColor = Theme.AccentRed;
             }
+        }
+
+        private static void EnableDoubleBuffer(Control c)
+        {
+            try
+            {
+                typeof(Control).InvokeMember("DoubleBuffered",
+                    BindingFlags.SetProperty | BindingFlags.Instance | BindingFlags.NonPublic,
+                    null, c, new object[] { true });
+            }
+            catch { }
         }
 
         protected override void OnFormClosing(FormClosingEventArgs e)
@@ -668,7 +1185,6 @@ namespace ClearSkyCoop.Launcher
             if (_beaconService != null)
             {
                 _beaconService.Dispose();
-                _beaconService = null;
             }
             base.OnFormClosing(e);
         }

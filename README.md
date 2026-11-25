@@ -1,182 +1,114 @@
-# Clear Sky Coop
+# Stalker Clear Sky: Coop
 
-Кооперативное прохождение сюжетной кампании S.T.A.L.K.E.R.: Clear Sky (2–4 игрока).
+**[English](README.md) | [Русский](README.ru.md)**
 
-**Статус: сетевой слой v0 + мост в движке + ввод; в игре видны куклы.** `coopnet`
-собирается и тестируется без
-движка и без установленной игры: каналы, надёжная доставка, фрагментация, keepalive,
-рукопожатие, клиент/сервер на несколько игроков, RTT, интерполяция, предсказание
-движения, прикладные сообщения, трансляция трансформа игрока. `coopnet` уже компилируется внутрь
-`xrNetServer.dll`, мост тикает из кадрового цикла, в консоли есть
-`coop_listen`/`coop_connect`/`coop_say`/`coop_stop`/`coop_status`/`coop_dump`; трансформ
-локального актора идёт в сеть, чужой игрок спавнится куклой, клиентский ввод
-двигает её на хосте. Две копии Clear Sky 1.5.10 поднимают сессию и видят куклы
-друг друга на `l01_escape` (`scripts/test_coop_level.ps1`); движение и анимация
-кукол ещё не проверялись руками — см. [docs/TESTING.md](docs/TESTING.md).
+Cooperative multiplayer campaign framework (2–4 players) for **S.T.A.L.K.E.R.: Clear Sky 1.5.10**, built on a custom C++20 UDP transport layer (`coopnet`), targeted patches to **OpenXRay**, synchronized Lua gameplay scripts, and a standalone **Clear Sky Tactical PDA** Windows launcher.
 
-## База
+---
 
-| Компонент | Решение |
+## Overview & Capabilities
+
+| Component | Role |
 |---|---|
-| Движок | Форк [OpenXRay/xray-16](https://github.com/OpenXRay/xray-16), ветка `dev` |
-| Игра | S.T.A.L.K.E.R.: Clear Sky 1.5.10 (Steam / GOG), своя копия у каждого игрока |
-| Язык | C++20 (движок), Lua 5.1 (игровая логика), CMake + Ninja/MSVC |
-| Транспорт | UDP, надёжные/ненадёжные каналы поверх ENet-подобного слоя |
-| Модель | Авторитарный сервер (listen server или dedicated), клиент = предсказание + интерполяция |
+| `coopnet/` | Standalone C++20 reliable/unreliable UDP transport, framing, handshake, delta snapshots, RTT measurement, movement prediction, and actor interpolation. |
+| `engine/` | Reproducible patch queue (`engine/patches/*.patch` + `engine/patches/files/`) applied over pinned OpenXRay commit (`engine/upstream.txt`). |
+| `gamedata/scripts/` | Lua co-op gameplay layer: story task sync (`coop_tasks.script`), dialog gating (`coop_dialogs.script`), story cutscene sync (`coop_cutscenes.script`), and in-game Ready/Skin lobby (`coop_lobby.script`). |
+| `launcher/` | C# WinForms launcher (`ClearSkyCoopLauncher.exe`) with 4 tactical views (`Lobby & Radar`, `Host Campaign`, `Mod & Config`, `Diagnostics`), LAN beacon discovery, mod deployment, and diagnostics bundle export. |
+| `tools/` & `scripts/` | Network relay simulator (`net_sim`), standalone echo/snapshot/movement test binaries, release packager, and 2-player live test harnesses. |
 
-Почему не xrMPE: их движок закрыт, и он собран под Call of Pripyat 1.6.02. Clear Sky —
-другая версия движка и другой набор скриптов (task_manager, smart_terrain, faction war).
-От xrMPE берём только идеи и UX, не код.
+### Key Implemented Gameplay Features
+- **Host-Authoritative Multiplayer Session**: Direct UDP co-op host/join flow with automatic player spawn sync, remote actor animation/pose interpolation, and level-matching verification.
+- **Cooperative Interaction & Survival**: Shared squad HUD/minimap marker & overhead health/nameplate, reduced friendly fire, downed-state ally revival/exchange, and story progression sync (tasks, dialogs, infoportions, cutscenes).
+- **In-Game Pre-Match Lobby (`coop_lobby.script`)**: Players select character skins inside the game (not in the launcher) and click **`Ready`**. Changing skins resets **`Ready`** state. When a saved game exists on the Host, only **`Continue`** is shown; when no save exists, both **`Continue`** and **`New Game`** are shown. The Host can start gameplay only after all players are marked **`Ready`**.
 
-## Структура репозитория
+---
 
-```
-coopnet/        наш сетевой кодек и транспорт (собирается и тестируется без движка)
-engine/         политика форка OpenXRay и наши патчи к движку
-gamedata/       только наш Lua-слой (скрипты коопа); ассеты GSC здесь не лежат
-docs/           архитектура, протокол, роадмап, сборка
-tools/          логгер трафика, инспектор снапшотов, позже — выделенный сервер
-```
+## Legal Notice & Prerequisites
 
-## Правовая рамка
+- **No copyrighted GSC Game World assets are distributed in this repository.** Original game archives (`.db*`/`.xdb`), textures, meshes, levels, and sounds are intentionally excluded.
+- Each player must own a **legal installation of S.T.A.L.K.E.R.: Clear Sky (version 1.5.10, Steam / GOG / Retail)**.
+- This mod is non-commercial fan software following [GSC Game World's Fan Content Creation Guidelines](https://www.gsc-game.com/guidelines/).
 
-- Игра и её ресурсы не распространяются с этим репозиторием. Мод ставится поверх легальной копии игры.
-- Никаких файлов из `gamedata` оригинала, `.db*`/`.xdb` архивов и распакованных ассетов GSC в репозитории.
-- Мод бесплатный, без монетизации — в соответствии с [Fan Content Creation Guidelines](https://www.gsc-game.com/guidelines/) GSC Game World.
-- Код движка наследует лицензию upstream-форка OpenXRay (см. `LICENSE` апстрима). Наши собственные файлы — MIT.
+### System Requirements
+- **OS**: Windows 10 / 11 (64-bit)
+- **Game**: S.T.A.L.K.E.R.: Clear Sky 1.5.10
+- **Network**: LAN or virtual LAN (Radmin VPN, ZeroTier, Hamachi, WireGuard) or port forwarding (`27016` UDP / `27015` UDP broadcast)
 
-## Сборка
+---
+
+## Installation & Playing (Players)
+
+1. Download or extract the packaged co-op release (or build from source using the steps below).
+2. Run **`ClearSkyCoopLauncher.exe`**.
+3. Open **Mod & Config**: confirm the path to your S.T.A.L.K.E.R.: Clear Sky installation and deploy the co-op binaries & `gamedata/scripts/`.
+4. **Host**: Go to **Host Campaign**, set player name, server name, and UDP port (`27016`), and click **Start Host**.
+5. **Client**: Go to **Lobby & Radar**, select a discovered LAN host (or enter Host IP/port directly), and click **Join**.
+6. Inside the **In-Game Lobby**, each player chooses a skin and clicks **`Ready`**. Once everyone is ready, the Host clicks **`Continue`** or **`New Game`**.
+
+See [docs/INSTALL.md](docs/INSTALL.md) for detailed troubleshooting and player instructions.
+
+---
+
+## Building & Testing from Source
+
+### 1. Build & Test `coopnet` (No game install required)
+Requires **Visual Studio 2022 / Build Tools** (MSVC C++20), **CMake >= 3.25**, and **Ninja**:
 
 ```powershell
 ./scripts/build.ps1 -Test
 ```
 
-Движок и игра:
+This compiles `coopnet` plus standalone verification tools (`coopnet_tests`, `coopnet_echo`, `coopnet_snap`, `coopnet_move`, `coopnet_chat`, `coopnet_world`, `coopnet_spawn`, `net_sim`) and executes the `ctest` suite.
+
+### 2. Build & Test the Launcher
+Requires .NET Framework 4.8 SDK / Visual Studio Roslyn `csc.exe`:
 
 ```powershell
-./engine/apply.ps1                         # патчи и coopnet в engine/src
-./engine/build.ps1                         # Release x64
-./scripts/deploy.ps1 -GameDir <каталог>    # бинарники в копию игры
+./launcher/build.ps1
+./ClearSkyCoopLauncher.exe --test-lobby
 ```
 
-Подробнее: [docs/BUILD.md](docs/BUILD.md). `coopnet` собирается и тестируется без движка
-и без установленной игры — это единственная часть, которую можно проверить прямо сейчас.
-
-## Что уже работает
-
-Проверяется без игры:
-
+### 3. Build the Patched OpenXRay Engine
 ```powershell
-./scripts/build.ps1 -Test          # ctest: юнит-тесты и сквозные сценарии
-./build/coopnet_echo.exe local     # рукопожатие и 20 сообщений туда-обратно через UDP
-./build/coopnet_snap.exe local     # репликация 32 сущностей дельтами, RTT и байты
-./build/coopnet_snap.exe two       # два клиента, у каждого свой набор видимых сущностей
-./build/coopnet_move.exe local     # предсказание движения и реконсиляция с сервером
-./build/coopnet_move.exe two       # два клиента по UDP: свои актёры, предсказание, коррекции
-./build/coopnet_chat.exe local     # прикладные сообщения: сервер пересылает чат всем, кроме автора
-./build/coopnet_world.exe local    # трансформы игроков: каждый видит, как двигается второй
-./build/coopnet_spawn.exe local    # спавн: клиент получает актора хоста и напарника, поздний гость — всех
-
-# тот же мир через симулятор сети: 80 мс RTT и 2% потерь
-./build/coopnet_snap.exe server 27126
-./build/net_sim.exe relay 27127 127.0.0.1:27126 40 2 15000
-./build/coopnet_snap.exe client 27127 5000
+./engine/fetch.ps1   # clones pinned OpenXRay upstream commit into engine/src/
+./engine/apply.ps1   # copies coopnet/ + engine/patches/files/ and applies patches
+./engine/build.ps1   # restores packages and compiles Release x64 binaries
 ```
 
-`ctest` включает `coopnet_snap_relay`: сервер, relay и клиент поднимаются
-автоматически (`scripts/test_relay.ps1`), тест падает при любом отклонённом снапшоте.
+More build details: [docs/BUILD.md](docs/BUILD.md) and [engine/README.md](engine/README.md).
 
-- `coopnet`: 4 канала поверх одного UDP-сокета, надёжный упорядоченный поток с окном
-  32, фрагментация крупных сообщений, keepalive и таймаут соединения.
-- Кодеки рукопожатия и слой соединения: клиент и сервер, слоты, deny-причины.
-- `NetServer`: несколько клиентов на одном сокете, маршрутизация, рассылка.
-- Измерение RTT по подтверждениям и счётчики трафика; буфер интерполяции удалённых
-  сущностей (позиция, углы по короткой дуге, без экстраполяции).
-- История ввода для предсказания; дельта-снапшоты строятся от последнего
-  подтверждённого (ack) состояния, клиент хранит 16 последних баз — потеря
-  снапшота не рвёт цепочку.
-- `tools/net_sim`: UDP-relay с односторонней задержкой и потерями; под ним
-  демо проходит 80 мс RTT / 2% и 160 мс RTT / 5% без отклонённых дельт.
-- Детерминированный шаг движения (общий для сервера и клиента) и клиентское
-  предсказание: при коррекции клиент встаёт на состояние сервера и повторно
-  применяет неподтверждённые входы.
-- Серверный `PlayerActor`: применяет `C_INPUT` ровно один раз в порядке тиков,
-  отвергает повторы и опоздавшие пакеты; снапшот несёт `last_processed_input`
-  для реконсиляции.
-- Interest management: фильтр сущностей по радиусу от позиции наблюдателя с
-  гистерезисом (150/165 м), сущности без позиции не фильтруются.
-- `ClientReplicator`: на каждого клиента свой фильтр и своя цепочка дельт; базы
-  между клиентами не разделяются.
-- `PlayerInterpolator`: два последних трансформа каждого игрока, поза на 100 мс
-  в прошлом, кратчайшая дуга по yaw, без экстраполяции; устаревшие записи
-  отбрасываются по таймауту.
-- `coopnet_echo`: два режима — сервер и клиент процессами (`server <port>` /
-  `client <port> [имя]`) или оба в одном процессе (`local`).
-- `coopnet_snap`: сервер мира на 20 Гц, клиент шлёт ввод с ack-ом снапшота, применяет
-  дельты; режимы `local`, `two`, `server`, `client`. В `two` два клиента получают
-  разные слоты (запрос `0xFF` — любой свободный), `net_id` берётся из рукопожатия,
-  у каждого свой взгляд на мир.
-- `coopnet_move`: детерминированная симуляция сервера и клиента с лагом 4 тика и
-  потерей снапшотов; сервер применяет ввод, клиент предсказывает и корректируется.
-  Внезапный импульс на 90-м тике показывает, что реконсиляция его исправляет.
-  Режим `two` — то же самое по живому UDP: два клиента, настоящие `net_id` из
-  рукопожатия, сервер двигает актёров из `C_INPUT`, каждый клиент видит и свой
-  предсказанный, и чужой актёр через буфер интерполяции (задержка 100 мс).
-  Режимы `server`/`client` позволяют прогнать это через `net_sim`; `ctest`-тест
-  `coopnet_move_relay` поднимает сервер и по relay на клиента (80 мс RTT, 2%
-  потерь) и падает при коррекции больше 15 см.
-- Серверный `PlayerActor` применяет ввод строго по порядку тиков и буферизует
-  кратковременные пропуски: потерянный тик восстанавливается повтором, а не
-  превращается в пропущенный шаг и «телепорт».
-- Клиентская реконсиляция корректно обрабатывает повторный ack: входы, ещё не
-  подтверждённые сервером, не теряются, поэтому предсказание не срывается в
-  момент, когда снапшот пришёл между двумя тиками ввода.
-- Прикладные сообщения: формат `C_CHAT` (UTF-8, до 200 байт) на надёжном
-  control-канале; сервер пересылает сообщение всем, кроме автора.
-  `coopnet_chat local/server/client` проверяет это по UDP, в движке — команда
-  `coop_say` и последняя строка в `coop_status`.
-- Трансформ игрока: `C_PLAYER` (позиция, поворот и биты движения, 23 байта) на том
-  же канале; мост публикует его из `CActor::UpdateCL` с частотой 20 Гц, чужие
-  трансформы доступны через `BridgeRemotePlayers` и печатаются в `coop_status`.
-  `coopnet_world local/server/client` проверяет обмен по UDP. Когда сервер видит
-  уход игрока (`NetServer::takeEvents`), он рассылает `C_PLAYER_GONE`, и мост
-  сразу забывает трансформ.
-- Мир и часы: `C_WORLD` (уровень и игровое время хоста) уходит новому клиенту
-  сразу после входа и дальше раз в секунду; расхождение уровней разрывает сессию,
-  а `BridgeServerGameTime()` даёт клиенту оценку часов сервера.
-- Спавн игроков: `C_SPAWN` несёт непрозрачный блоб `CSE_Abstract` (до 4096 байт).
-  Клиент отправляет свой спавн после входа, сервер — свой под `net_id = 1`; поздний
-  гость получает все известные спавны. Каждая сторона выделяет чужому игроку
-  локальный game ID из диапазона `0xF000+`, а `net_id` остаётся единственным общим
-  идентификатором. По `C_SPAWN_GONE` кукла удаляется без ожидания таймаута.
-  Мост отдаёт блобы через `BridgeSetLocalSpawn`/`BridgeTakeSpawns`, движковая часть
-  спавнит через `g_sv_Spawn`, снимает `LOCAL`/`ASPLAYER` и оставляет куклу
-  включённой. Полученные трансформы применяются к кукле: поворот и позиция из
-  `C_PLAYER`, затем `spatial_move`. В игре куклы спавнятся с обеих сторон
-  (`test_coop_level.ps1`), движение кукол ещё не проверялось руками.
-- Ввод: клиент публикует `C_INPUT` с 60 Гц из `CActor::UpdateCL` (оси — из
-  `mstate_real`, углы — из `Orientation()`, маска кнопок — оттуда же), хост
-  хранит последний ввод каждого пира и двигает куклу тем же контроллером, что и
-  своего актора (`CPHMovementControl::Calculate`), 20 Гц рассылает трансформ
-  куклы под `net_id` владельца. Пока ввод свежий (0,5 с), собственный
-  `C_PLAYER` клиента не пересылается; без ввода действует прежний путь через
-  пересылку `C_PLAYER`. Реконсиляция собственного персонажа на клиенте ещё не
-  включена. Чужие трансформы сглаживаются: мост хранит два последних сэмпла
-  игрока и отдаёт позу на 100 мс в прошлом (кратчайшая дуга по yaw), без
-  экстраполяции. Биты движения едут в том же `C_PLAYER` и дискретны: при
-  интерполяции берутся из старого сэмпла, а на кукле применяются через
-  `SetBodyState` + `g_SetAnimation`, поэтому анимация ходьбы, приседа и прыжка не
-  отстаёт от пересылки трансформа. В игре не проверялось (нужны два живых окна и
-  прогулка по локации).
+---
 
-Дальше по роадмапу — M1: снапшоты мира и интерполяция сущностей, затем ручная
-проверка движения, ввода и анимации кукол по [docs/TESTING.md](docs/TESTING.md).
+## Repository Structure
 
-## Документы
+```text
+.
+├── .github/workflows/   CI pipeline (coopnet CMake/ctest + launcher build & lobby test)
+├── coopnet/             Standalone C++20 multiplayer transport, state sync & unit tests
+├── docs/                Architecture, wire protocol, roadmap, build, install & test guides
+├── engine/              Pinned upstream OpenXRay commit & ordered patches (no engine/src in git)
+├── gamedata/            Co-op Lua scripts only (no proprietary GSC assets)
+├── launcher/            C# WinForms Clear Sky Tactical PDA launcher
+├── scripts/             Build, deployment, packaging & live 2-player verification scripts
+└── tools/               UDP relay simulator and coopnet integration test binaries
+```
 
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — как это устроено и почему
-- [docs/PROTOCOL.md](docs/PROTOCOL.md) — формат пакетов и снапшотов
-- [docs/ROADMAP.md](docs/ROADMAP.md) — этапы M0–M6 с критериями готовности и рисками
-- [docs/BUILD.md](docs/BUILD.md) — тулчейн и сборка
-- [docs/TESTING.md](docs/TESTING.md) — ручная проверка в игре
-- [docs/MEASUREMENTS.md](docs/MEASUREMENTS.md) — замеры производительности (с M1)
+---
+
+## Documentation Index
+
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — module boundaries & engine hook design
+- [docs/PROTOCOL.md](docs/PROTOCOL.md) — UDP wire framing, messages & snapshots
+- [docs/ROADMAP.md](docs/ROADMAP.md) — development milestones (M0–M6)
+- [docs/BUILD.md](docs/BUILD.md) — toolchain setup & compilation guide
+- [docs/INSTALL.md](docs/INSTALL.md) — end-user setup & gameplay guide
+- [docs/TESTING.md](docs/TESTING.md) — automated & manual multiplayer test checklist
+- [docs/MEASUREMENTS.md](docs/MEASUREMENTS.md) — performance and latency measurements
+
+---
+
+## Contributing & License
+
+Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) and our [Code of Conduct](CODE_OF_CONDUCT.md) before opening a PR.
+
+Licensed under the [MIT License](LICENSE).

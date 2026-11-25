@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  coopnet-build-and-test:
+    name: Build and Test coopnet
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build and run ctest via scripts/build.ps1
+        shell: pwsh
+        run: ./scripts/build.ps1 -Test
+
+  launcher-build-and-test:
+    name: Build and Test ClearSkyCoopLauncher
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Compile ClearSkyCoopLauncher
+        shell: pwsh
+        run: ./launcher/build.ps1
+
+      - name: Run launcher lobby beacon self-test
+        shell: pwsh
+        run: ./bin/ClearSkyCoopLauncher.exe --test-lobby

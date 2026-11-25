@@ -36,6 +36,8 @@ engine/src/
 /release/
 /bin/
 ClearSkyCoopLauncher.exe
+launcher_config.ini
+/*.png
 *.pdb
 *.ilk
 *.obj

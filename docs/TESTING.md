@@ -44,7 +44,7 @@
 Полезные ключи обоих скриптов: `-TimeoutSeconds`, `-Keep` (не гасить процессы,
 чтобы посмотреть глазами), `-ShowLogs` (печатать хвост логов), `-Port`,
 `-ClientName`. В копиях, запущенных вручную, логи лежат в
-`<копия>\_appdata_\logs\openxray_ilyas.log`; прошлый запуск — рядом, `.bkp`.
+`<копия>\_appdata_\logs\openxray_<user>.log`; прошлый запуск — рядом, `.bkp`.
 
 Перед прогоном стоит убить зависшие процессы: `Get-Process xrEngine | Stop-Process -Force`.
 

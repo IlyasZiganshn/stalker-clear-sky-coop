@@ -1,0 +1,36 @@
+MIT License
+
+Copyright (c) 2026 Stalker Clear Sky: Coop Contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+Third-Party & Intellectual Property Notice:
+
+- This repository contains original cooperative networking code (`coopnet/`),
+  engine patches (`engine/patches/`), Lua scripts (`gamedata/scripts/`), launcher
+  sources (`launcher/`), tooling (`tools/`), and scripts (`scripts/`).
+- Upstream OpenXRay engine sources (`OpenXRay/xray-16`) are not redistributed
+  directly in this repository; when fetched via `engine/fetch.ps1`, OpenXRay team
+  additions remain governed by the OpenXRay MIT License.
+- No proprietary game assets, archives (`.db*`/`.xdb`), or copyrighted materials
+  from GSC Game World's S.T.A.L.K.E.R.: Clear Sky are distributed in this
+  repository. Users must supply their own legal copy of S.T.A.L.K.E.R.: Clear Sky
+  in accordance with GSC Game World's Fan Content Creation Guidelines.

@@ -8,6 +8,7 @@
 #include "xr_ioc_cmd.h"
 #include "IGame_Level.h"
 #include "xr_object.h"
+#include "Render.h"
 #include "xrNetServer/coop/coop_bridge.h"
 
 namespace
@@ -258,6 +259,23 @@ public:
 
     void Info(TInfo& I) override { xr_strcpy(I, "[intervalMs], 0 turns it off"); }
 };
+
+class CCC_CoopScreenshot : public IConsole_Command
+{
+public:
+    CCC_CoopScreenshot(pcstr name) : IConsole_Command(name) { bEmptyArgsHandled = true; }
+
+    void Execute(pcstr args) override
+    {
+        if (GEnv.Render != nullptr)
+        {
+            GEnv.Render->Screenshot();
+            Msg("* coop: in-game screenshot captured");
+        }
+    }
+
+    void Info(TInfo& I) override { xr_strcpy(I, "captures in-game screenshot to $screenshots$"); }
+};
 } // namespace
 
 void CCC_RegisterCoop()
@@ -270,6 +288,8 @@ void CCC_RegisterCoop()
     CMD1(CCC_CoopDump, "coop_dump");
     CMD1(CCC_CoopDrive, "coop_drive");
     CMD1(CCC_CoopTrace, "coop_trace");
+    CMD1(CCC_CoopScreenshot, "screenshot");
+    CMD1(CCC_CoopScreenshot, "coop_screenshot");
 }
 
 namespace coop

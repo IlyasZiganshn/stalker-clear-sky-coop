@@ -22,16 +22,26 @@
 #include "xrNetServer/coop/coop_bridge.h"
 #include "ai_space.h"
 #include "xrScriptEngine/script_engine.hpp"
+#include "GametaskManager.h"
+#include "GameTask.h"
+#include "CameraEffector.h"
+#include "ActorEffector.h"
+#include "alife_registry_wrappers.h"
+
+extern bool g_bDisableAllInput;
 
 namespace coop
 {
 namespace
 {
+static bool g_bApplyingRemoteSync = false;
+static bool g_clientSyncRequested = false;
+static bool g_remoteInCutscene = false;
 constexpr u32 kMaxRemoteEntities = 8;
 constexpr u16 kFirstRemoteGameId = 0xF000;
 constexpr u16 kLastRemoteGameId = 0xFFF0;
-// The host simulates dolls from input and broadcasts their state at ~30 Hz.
-constexpr u32 kDollPublishIntervalMs = 33;
+// The host simulates dolls from input and broadcasts their state at 40 Hz.
+constexpr u32 kDollPublishIntervalMs = 25;
 
 // net_id <-> local game id of a remote player doll. The host and every client
 // allocate their own ids: game ids are only unique inside one process.
@@ -146,6 +156,10 @@ bool PublishLocalSpawn()
         return false;
     }
 
+    // Always update server entity position and orientation to actor's actual world position
+    entity->o_Position.set(g_actor->Position());
+    entity->o_Angle.set(0.f, g_actor->Orientation().yaw, 0.f);
+
     // bLocal = FALSE also strips LOCAL/ASPLAYER: the receiver must not adopt
     // this actor as its own controlled entity.
     NET_Packet packet;
@@ -155,7 +169,8 @@ bool PublishLocalSpawn()
         Msg("! coop: local spawn rejected (%u bytes)", unsigned(packet.B.count));
         return false;
     }
-    Msg("* coop: local spawn published (%u bytes)", unsigned(packet.B.count));
+    Msg("* coop: local spawn published (%u bytes) at position (%.2f, %.2f, %.2f)",
+        unsigned(packet.B.count), entity->o_Position.x, entity->o_Position.y, entity->o_Position.z);
     return true;
 }
 
@@ -222,6 +237,14 @@ bool SpawnRemote(const SpawnInfo& info)
     entity->s_flags.set(M_SPAWN_OBJECT_LOCAL, FALSE);
     entity->s_flags.set(M_SPAWN_OBJECT_ASPLAYER, FALSE);
 
+    Fvector spawnPos = entity->o_Position;
+    if (spawnPos.magnitude() < 1.0f && g_actor != nullptr)
+    {
+        spawnPos = g_actor->Position();
+        spawnPos.x += 1.5f;
+    }
+    entity->o_Position = spawnPos;
+
     Level().g_sv_Spawn(entity);
     F_entity_Destroy(entity);
 
@@ -237,12 +260,26 @@ bool SpawnRemote(const SpawnInfo& info)
     object->setLocal(false);
     object->setEnabled(true);
 
+    CActor* doll = smart_cast<CActor*>(object);
+    if (doll != nullptr)
+    {
+        doll->Position().set(spawnPos);
+        doll->XFORM().c.set(spawnPos);
+        doll->spatial_move();
+        if (doll->character_physics_support() && doll->character_physics_support()->movement())
+        {
+            doll->character_physics_support()->movement()->SetPosition(spawnPos);
+            doll->character_physics_support()->movement()->SetVelocity(0.f, 0.f, 0.f);
+        }
+    }
+
     RememberRemote(info.netId, gameId);
     if (g_pGameLevel != nullptr)
     {
         Level().MapManager().AddMapLocation("mp_friend_location", gameId);
     }
-    Msg("* coop: remote player %u spawned as game id %u", info.netId, gameId);
+    Msg("* coop: remote player %u spawned as game id %u at (%.2f, %.2f, %.2f)",
+        info.netId, gameId, spawnPos.x, spawnPos.y, spawnPos.z);
     return true;
 }
 
@@ -277,8 +314,6 @@ void ApplyRemoteTransforms(const PlayerInput* inputs, u32 inputCount)
         for (u32 j = 0; j < inputCount; ++j)
             if (inputs[j].netId == players[i].netId)
                 simulated = true;
-        if (simulated)
-            continue;
 
         const u16 gameId = FindRemoteGameId(players[i].netId);
         if (gameId == 0xFFFF)
@@ -286,24 +321,145 @@ void ApplyRemoteTransforms(const PlayerInput* inputs, u32 inputCount)
         IGameObject* object = Level().Objects.net_Find(gameId);
         if (object == nullptr)
             continue;
-        // setXYZ rebuilds the rotation and clears the matrix translation, so
-        // the position has to be restored after it.
-        object->XFORM().setXYZ(0.f, players[i].yaw, 0.f);
-        object->Position().set(players[i].x, players[i].y, players[i].z);
-        object->spatial_move();
+        CActor* actor = smart_cast<CActor*>(object);
+        if (actor == nullptr)
+            continue;
+        if (coop::ShouldHideRemoteDolls())
+            continue;
 
-        // The owner still sends its movement bits with the transform, so the
-        // animation does not freeze between the rare input samples.
-        if (CActor* actor = smart_cast<CActor*>(object))
+        // If simulated on the authority host, reconcile simulated physics position
+        // with the reported client position to prevent drift over time.
+        if (simulated)
         {
-            actor->Orientation().yaw = players[i].yaw;
-            actor->SetBodyState(players[i].bodyState);
-            actor->SetWishfulBodyState(players[i].bodyState);
-            actor->g_SetAnimation(players[i].bodyState);
-
-            if (actor->character_physics_support() && actor->character_physics_support()->movement())
+            Fvector repPos{ players[i].x, players[i].y, players[i].z };
+            float dist = actor->Position().distance_to(repPos);
+            const bool moving = (players[i].bodyState & (mcFwd | mcBack | mcLStrafe | mcRStrafe)) != 0;
+            if (repPos.magnitude() > 1.0f && (actor->Position().magnitude() < 1.0f || !moving || dist > 0.6f))
             {
-                actor->character_physics_support()->movement()->SetPosition(actor->Position());
+                actor->Position().set(repPos);
+                actor->XFORM().c.set(repPos);
+                actor->spatial_move();
+                if (actor->character_physics_support() && actor->character_physics_support()->movement())
+                {
+                    actor->character_physics_support()->movement()->SetPosition(repPos);
+                    actor->character_physics_support()->movement()->SetVelocity(0.f, 0.f, 0.f);
+                }
+            }
+            if (actor->Position().magnitude() <= 1.0f)
+            {
+                Fvector rec = repPos.magnitude() > 1.0f ? repPos :
+                    (g_actor ? (g_actor->Position() + Fvector{1.5f, 0.f, 0.f}) : Fvector{-180.f, 4.8f, -270.f});
+                actor->Position().set(rec);
+                actor->XFORM().c.set(rec);
+                actor->spatial_move();
+                if (actor->character_physics_support() && actor->character_physics_support()->movement())
+                {
+                    actor->character_physics_support()->movement()->SetPosition(rec);
+                    actor->character_physics_support()->movement()->SetVelocity(0.f, 0.f, 0.f);
+                }
+            }
+            if (moving)
+            {
+                actor->ModelYaw() = players[i].yaw;
+                actor->ModelYawDest() = players[i].yaw;
+                actor->ModelYawDelta() = 0.f;
+            }
+            else
+            {
+                float diff = angle_normalize_signed(players[i].yaw - actor->ModelYaw());
+                if (_abs(diff) > PI_DIV_4)
+                {
+                    actor->ModelYawDest() = players[i].yaw;
+                    angle_lerp(actor->ModelYaw(), actor->ModelYawDest(), PI_MUL_2, Device.fTimeDelta);
+                }
+            }
+            actor->XFORM().rotateY(-actor->ModelYaw());
+            actor->XFORM().c.set(actor->Position());
+            actor->spatial_move();
+            actor->Orientation().yaw = players[i].yaw;
+            actor->Orientation().pitch = players[i].pitch;
+            actor->UnaffectedOrientation().yaw = players[i].yaw;
+            actor->UnaffectedOrientation().pitch = players[i].pitch;
+            if (actor->cam_Active() != nullptr)
+            {
+                actor->cam_Active()->Set(-players[i].yaw, players[i].pitch, 0.f);
+            }
+            continue;
+        }
+
+        // Align doll orientation and position with smooth velocity and orientation
+        Fvector pos{ players[i].x, players[i].y, players[i].z };
+        Fvector prevPos = actor->Position();
+        Fvector vel;
+        vel.sub(pos, prevPos);
+        if (Device.fTimeDelta > 0.0001f)
+            vel.div(Device.fTimeDelta);
+        else
+            vel.set(0.f, 0.f, 0.f);
+
+        const bool moving = (players[i].bodyState & (mcFwd | mcBack | mcLStrafe | mcRStrafe)) != 0;
+        if (moving)
+        {
+            actor->ModelYaw() = players[i].yaw;
+            actor->ModelYawDest() = players[i].yaw;
+            actor->ModelYawDelta() = 0.f;
+        }
+        else
+        {
+            float diff = angle_normalize_signed(players[i].yaw - actor->ModelYaw());
+            if (_abs(diff) > PI_DIV_4)
+            {
+                actor->ModelYawDest() = players[i].yaw;
+                angle_lerp(actor->ModelYaw(), actor->ModelYawDest(), PI_MUL_2, Device.fTimeDelta);
+            }
+        }
+
+        if (pos.magnitude() > 1.0f)
+        {
+            object->XFORM().rotateY(-actor->ModelYaw());
+            object->Position().set(pos);
+            object->XFORM().c.set(pos);
+            object->spatial_move();
+        }
+        else
+        {
+            if (object->Position().magnitude() <= 1.0f && g_actor != nullptr)
+            {
+                Fvector rec = g_actor->Position();
+                rec.x += 1.5f;
+                object->Position().set(rec);
+            }
+            object->XFORM().rotateY(-actor->ModelYaw());
+            object->XFORM().c.set(object->Position());
+            object->spatial_move();
+        }
+
+        actor->Orientation().yaw = players[i].yaw;
+        actor->Orientation().pitch = players[i].pitch;
+        actor->UnaffectedOrientation().yaw = players[i].yaw;
+        actor->UnaffectedOrientation().pitch = players[i].pitch;
+        if (actor->cam_Active() != nullptr)
+        {
+            actor->cam_Active()->Set(-players[i].yaw, players[i].pitch, 0.f);
+        }
+
+        actor->SetBodyState(players[i].bodyState);
+        actor->SetWishfulBodyState(players[i].bodyState);
+        actor->g_SetAnimation(players[i].bodyState);
+        actor->SetOldBodyState(players[i].bodyState);
+
+        if (actor->character_physics_support() && actor->character_physics_support()->movement())
+        {
+            if (pos.magnitude() > 1.0f)
+            {
+                actor->character_physics_support()->movement()->SetPosition(pos);
+            }
+            if (moving)
+            {
+                actor->character_physics_support()->movement()->SetVelocity(vel);
+            }
+            else
+            {
                 actor->character_physics_support()->movement()->SetVelocity(0.f, 0.f, 0.f);
             }
         }
@@ -395,10 +551,28 @@ void MoveRemoteDoll(const PlayerInput& input, float dt)
     CActor* actor = smart_cast<CActor*>(Level().Objects.net_Find(gameId));
     if (actor == nullptr || !actor->g_Alive())
         return;
+    if (coop::ShouldHideRemoteDolls())
+        return;
 
     CPHMovementControl* movement = actor->character_physics_support()->movement();
     if (movement == nullptr || !movement->CharacterExist())
         return;
+
+    // Check if movement position got lost at (0, 0, 0)
+    Fvector checkPos;
+    movement->GetPosition(checkPos);
+    if (checkPos.magnitude() < 1.0f)
+    {
+        Fvector recoverPos = (actor->Position().magnitude() > 1.0f) ? actor->Position() :
+            (g_actor ? g_actor->Position() : Fvector{ -180.f, 4.8f, -270.f });
+        if (g_actor && actor->Position().magnitude() <= 1.0f)
+            recoverPos.x += 1.5f;
+        movement->SetPosition(recoverPos);
+        movement->SetVelocity(0.f, 0.f, 0.f);
+        actor->Position().set(recoverPos);
+        actor->XFORM().c.set(recoverPos);
+        actor->spatial_move();
+    }
 
     const u32 mstate = BuildBodyState(input);
     Fvector accel = BuildAccel(*actor, mstate, input);
@@ -426,13 +600,47 @@ void MoveRemoteDoll(const PlayerInput& input, float dt)
 
     Fvector position;
     movement->GetPosition(position);
-    actor->XFORM().setXYZ(0.f, input.yaw, 0.f);
-    actor->Position().set(position);
-    actor->spatial_move();
+
+    // Smooth body orientation vs head/camera direction
+    if (mstate & mcAnyMove)
+    {
+        actor->ModelYaw() = input.yaw;
+        actor->ModelYawDest() = input.yaw;
+        actor->ModelYawDelta() = 0.f;
+    }
+    else
+    {
+        float diff = angle_normalize_signed(input.yaw - actor->ModelYaw());
+        if (_abs(diff) > PI_DIV_4)
+        {
+            actor->ModelYawDest() = input.yaw;
+            angle_lerp(actor->ModelYaw(), actor->ModelYawDest(), PI_MUL_2, dt);
+        }
+    }
+
+    actor->XFORM().rotateY(-actor->ModelYaw());
+    if (position.magnitude() > 1.0f)
+    {
+        actor->Position().set(position);
+        actor->XFORM().c.set(position);
+        actor->spatial_move();
+    }
+    else
+    {
+        actor->XFORM().c.set(actor->Position());
+        actor->spatial_move();
+    }
 
     actor->Orientation().yaw = input.yaw;
     actor->Orientation().pitch = input.pitch;
+    actor->UnaffectedOrientation().yaw = input.yaw;
+    actor->UnaffectedOrientation().pitch = input.pitch;
+    if (actor->cam_Active() != nullptr)
+    {
+        actor->cam_Active()->Set(-input.yaw, input.pitch, 0.f);
+    }
     actor->g_SetAnimation(mstate);
+    actor->SetOldBodyState(mstate);
 }
 
 // The owning client keeps its own prediction; everyone else must see the
@@ -453,13 +661,156 @@ void PublishDollStates(const PlayerInput* inputs, u32 inputCount)
             continue;
         const Fvector& position = actor->Position();
         BridgePublishRemoteState(inputs[i].netId, position.x, position.y,
-            position.z, inputs[i].yaw,
+            position.z, inputs[i].yaw, inputs[i].pitch,
             static_cast<u16>(actor->MovingState() & 0x7FFF));
     }
 }
 
 void PollRemoteEntities()
 {
+    coop::PollCoopRpc();
+
+    static bool s_wasInCutscene = false;
+    const bool inCutscene = coop::IsLocalInCutscene();
+    const bool shouldHide = coop::ShouldHideRemoteDolls();
+    const bool levelReady = (Device.dwTimeGlobal > 4000 && Device.dwPrecacheFrame == 0 && g_actor != nullptr && g_pGameLevel != nullptr);
+
+    if (shouldHide)
+    {
+        for (const auto& remote : g_remotes)
+        {
+            if (remote.gameId != 0xFFFF)
+            {
+                if (g_pGameLevel != nullptr)
+                    Level().MapManager().RemoveMapLocationByObjectID(remote.gameId);
+                CActor* doll = smart_cast<CActor*>(Level().Objects.net_Find(remote.gameId));
+                if (doll != nullptr)
+                {
+                    doll->setVisible(false);
+                    doll->setEnabled(false);
+                }
+            }
+        }
+    }
+
+    if (levelReady)
+    {
+        if (inCutscene && !s_wasInCutscene)
+        {
+            Msg("* coop: entered cutscene - hiding remote dolls and broadcasting COOP_CUTSCENE|START");
+            BridgeSay("COOP_CUTSCENE|START");
+        }
+        else if (!inCutscene && s_wasInCutscene)
+        {
+            Msg("* coop: exited cutscene - broadcasting COOP_CUTSCENE|STOP");
+            BridgeSay("COOP_CUTSCENE|STOP");
+
+            if (!coop::ShouldHideRemoteDolls())
+            {
+                for (const auto& remote : g_remotes)
+                {
+                    if (remote.gameId != 0xFFFF)
+                    {
+                        if (g_pGameLevel != nullptr)
+                        {
+                            Level().MapManager().RemoveMapLocationByObjectID(remote.gameId);
+                            Level().MapManager().AddMapLocation("mp_friend_location", remote.gameId);
+                        }
+                        CActor* doll = smart_cast<CActor*>(Level().Objects.net_Find(remote.gameId));
+                        if (doll != nullptr)
+                        {
+                            doll->setVisible(true);
+                            doll->setEnabled(true);
+                        }
+                    }
+                }
+            }
+
+            // Only the server/host has authority to position partner beside local actor
+            static u32 s_lastCutsceneTeleportTime = 0;
+            if (BridgeIsServer() && g_actor != nullptr && (Device.dwTimeGlobal - s_lastCutsceneTeleportTime > 2000))
+            {
+                s_lastCutsceneTeleportTime = Device.dwTimeGlobal;
+                for (const auto& remote : g_remotes)
+                {
+                    if (remote.gameId != 0xFFFF)
+                    {
+                        CActor* doll = smart_cast<CActor*>(Level().Objects.net_Find(remote.gameId));
+                        if (doll != nullptr)
+                        {
+                            // Compute safe partner landing point beside actor
+                            Fvector basePos = g_actor->Position();
+                            Fvector rightDir;
+                            rightDir.crossproduct(g_actor->Direction(), Fvector().set(0.f, 1.f, 0.f));
+                            if (rightDir.magnitude() < 0.1f)
+                                rightDir.set(1.5f, 0.f, 0.f);
+                            else
+                            {
+                                rightDir.normalize();
+                                rightDir.mul(1.5f);
+                            }
+
+                            Fvector backDir = g_actor->Direction();
+                            backDir.invert();
+                            backDir.normalize();
+                            backDir.mul(1.5f);
+
+                            Fvector targetPos = basePos;
+                            targetPos.add(rightDir);
+
+                            // Test raycast to prevent wall clipping
+                            collide::rq_result rq;
+                            Fvector rayStart = basePos;
+                            rayStart.y += 0.8f;
+                            Fvector rayDir = rightDir;
+                            rayDir.normalize();
+                            if (Level().ObjectSpace.RayPick(rayStart, rayDir, 1.6f, collide::rqtStatic, rq, g_actor))
+                            {
+                                Fvector leftDir = rightDir;
+                                leftDir.invert();
+                                rayDir = leftDir;
+                                rayDir.normalize();
+                                if (Level().ObjectSpace.RayPick(rayStart, rayDir, 1.6f, collide::rqtStatic, rq, g_actor))
+                                {
+                                    targetPos = basePos;
+                                    targetPos.add(backDir);
+                                }
+                                else
+                                {
+                                    targetPos = basePos;
+                                    targetPos.add(leftDir);
+                                }
+                            }
+
+                            doll->Position().set(targetPos);
+                            doll->XFORM().c.set(targetPos);
+                            doll->spatial_move();
+                            if (doll->character_physics_support() && doll->character_physics_support()->movement())
+                            {
+                                doll->character_physics_support()->movement()->SetPosition(targetPos);
+                                doll->character_physics_support()->movement()->SetVelocity(0.f, 0.f, 0.f);
+                            }
+
+                            string256 tmsg;
+                            xr_sprintf(tmsg, "COOP_TELEPORT|%.2f|%.2f|%.2f|%.2f",
+                                targetPos.x, targetPos.y, targetPos.z, g_actor->Orientation().yaw);
+                            BridgeSay(tmsg);
+
+                            Msg("* coop: cutscene ended, positioned partner doll safely beside actor at (%.2f, %.2f, %.2f)",
+                                targetPos.x, targetPos.y, targetPos.z);
+                        }
+                    }
+                }
+            }
+        }
+        s_wasInCutscene = inCutscene;
+    }
+    else
+    {
+        // Still initializing/precaching - do not trigger false cutscene transitions
+        s_wasInCutscene = inCutscene;
+    }
+
     // Despawns go first: a replaced spawn is queued as despawn + spawn in the
     // same tick, and the old doll must be gone before the new one is built.
     u32 gone[8];
@@ -490,6 +841,8 @@ struct DrivePhase
 struct DrivePlan
 {
     u32 delayMs = 0;
+    float targetYaw = 0.f;
+    bool hasTargetYaw = false;
     std::vector<DrivePhase> phases;
     u32 totalDurationMs = 0;
     bool valid = false;
@@ -512,6 +865,18 @@ DrivePlan ParseDriveScript(pcstr script)
 
     while (*end == ' ' || *end == '\t')
         ++end;
+
+    // Optional target yaw: e.g. yaw=-1.57 or yaw=3.14
+    if (std::strncmp(end, "yaw=", 4) == 0)
+    {
+        end += 4;
+        char* yawEnd = nullptr;
+        plan.targetYaw = std::strtof(end, &yawEnd);
+        plan.hasTargetYaw = true;
+        end = yawEnd;
+        while (*end == ' ' || *end == '\t')
+            ++end;
+    }
 
     pcstr cursor = end;
     plan.totalDurationMs = plan.delayMs;
@@ -603,6 +968,14 @@ u32 EvaluateDebugDrive(u32 nowMs)
     if (elapsed < g_currentPlan.delayMs)
         return 0;
 
+    if (g_currentPlan.hasTargetYaw && g_actor != nullptr)
+    {
+        g_actor->Orientation().yaw = g_currentPlan.targetYaw;
+        g_actor->UnaffectedOrientation().yaw = g_currentPlan.targetYaw;
+        if (g_actor->cam_Active())
+            g_actor->cam_Active()->Set(-g_currentPlan.targetYaw, g_actor->Orientation().pitch, 0.f);
+    }
+
     u32 phaseStart = g_currentPlan.delayMs;
     for (const auto& phase : g_currentPlan.phases)
     {
@@ -642,7 +1015,11 @@ void TraceDollStates(CActor* actor, u32 nowMs)
         if (obj == nullptr)
             continue;
         CActor* remoteActor = smart_cast<CActor*>(obj);
-        const Fvector& pos = obj->Position();
+        Fvector pos = obj->Position();
+        if (pos.magnitude() <= 1.0f && remoteActor != nullptr && remoteActor->character_physics_support() && remoteActor->character_physics_support()->movement())
+        {
+            remoteActor->character_physics_support()->movement()->GetPosition(pos);
+        }
         const u32 mstate = remoteActor ? remoteActor->MovingState() : 0;
         Msg("* coop: trace doll %u (game id %u) at %.2f %.2f %.2f, yaw %.2f, mstate 0x%04x",
             remote.netId, remote.gameId, pos.x, pos.y, pos.z, obj->Orientation().yaw, mstate);
@@ -699,11 +1076,318 @@ void PublishLocalInput(CActor* actor, u32 driveMstate)
     if (mstate & mcSprint)
         buttons |= kInputButtonSprint;
 
-    const SRotation orientation = actor->Orientation();
-    BridgePublishLocalInput(moveX, moveY, orientation.yaw, orientation.pitch,
+    BridgePublishLocalInput(moveX, moveY, actor->Orientation().yaw, actor->Orientation().pitch,
         buttons, static_cast<u8>(actor->inventory().GetActiveSlot()));
 }
 } // namespace
+
+bool IsLocalInCutscene()
+{
+    if (g_bDisableAllInput)
+        return true;
+    if (g_actor != nullptr)
+    {
+        if (g_actor->Cameras().HasAbsolutePositioningEffector())
+            return true;
+    }
+    if (g_pGameLevel != nullptr && Level().Cameras().GetCamEffector(cefDemo) != nullptr)
+        return true;
+    return false;
+}
+
+bool ShouldHideRemoteDolls()
+{
+    return IsLocalInCutscene() || g_remoteInCutscene;
+}
+
+bool IsInCutscene()
+{
+    return ShouldHideRemoteDolls();
+}
+
+bool IsIgnoredInfoportion(pcstr infoId)
+{
+    if (infoId == nullptr || infoId[0] == 0)
+        return true;
+    if (xr_strcmp(infoId, "ui_talk_show") == 0 ||
+        xr_strcmp(infoId, "ui_talk_hide") == 0 ||
+        xr_strcmp(infoId, "ui_pda") == 0 ||
+        xr_strcmp(infoId, "ui_pda_hide") == 0 ||
+        xr_strcmp(infoId, "ui_pda_map_local") == 0 ||
+        xr_strcmp(infoId, "eptTasks") == 0 ||
+        xr_strcmp(infoId, "eptMap") == 0 ||
+        xr_strcmp(infoId, "eptFactionWar") == 0 ||
+        xr_strcmp(infoId, "eptRanking") == 0 ||
+        xr_strcmp(infoId, "eptLogs") == 0)
+    {
+        return true;
+    }
+    return false;
+}
+
+void OnReceiveInfo(pcstr infoId)
+{
+    if (g_bApplyingRemoteSync || !BridgeActive() || IsIgnoredInfoportion(infoId))
+        return;
+    string256 msg;
+    xr_sprintf(msg, "COOP_INFO|GIVE|%s", infoId);
+    BridgeSay(msg);
+}
+
+void OnDisableInfo(pcstr infoId)
+{
+    if (g_bApplyingRemoteSync || !BridgeActive() || IsIgnoredInfoportion(infoId))
+        return;
+    string256 msg;
+    xr_sprintf(msg, "COOP_INFO|DISABLE|%s", infoId);
+    BridgeSay(msg);
+}
+
+void OnTaskGiven(pcstr taskId)
+{
+    if (g_bApplyingRemoteSync || !BridgeActive() || !taskId || !taskId[0])
+        return;
+    string256 msg;
+    xr_sprintf(msg, "COOP_TASK|GIVE|%s", taskId);
+    BridgeSay(msg);
+}
+
+void OnTaskState(pcstr taskId, u32 state, u32 objectiveId)
+{
+    if (g_bApplyingRemoteSync || !BridgeActive() || !taskId || !taskId[0])
+        return;
+    string256 msg;
+    xr_sprintf(msg, "COOP_TASK|STATE|%s|%u|%u", taskId, state, objectiveId);
+    BridgeSay(msg);
+}
+
+void PollCoopRpc()
+{
+    if (!BridgeActive() || g_actor == nullptr)
+        return;
+
+    // If client just joined and has actor, request initial sync
+    if (!BridgeIsServer() && !g_clientSyncRequested)
+    {
+        g_clientSyncRequested = true;
+        BridgeSay("COOP_SYNC_REQ");
+    }
+
+    char rpc[512];
+    while (BridgeTakeRpc(rpc, sizeof(rpc)))
+    {
+        if (xr_strcmp(rpc, "COOP_SYNC_REQ") == 0)
+        {
+            // Host sends current known info and tasks to the new peer
+            if (BridgeIsServer() && g_actor != nullptr)
+            {
+                Msg("* coop: responding to COOP_SYNC_REQ from peer");
+                // Sync active info portions
+                const KNOWN_INFO_VECTOR* known = g_actor->m_known_info_registry->registry().objects_ptr();
+                if (known)
+                {
+                    for (const auto& item : *known)
+                    {
+                        if (IsIgnoredInfoportion(item.info_id.c_str()))
+                            continue;
+                        string256 msg;
+                        xr_sprintf(msg, "COOP_INFO|GIVE|%s", item.info_id.c_str());
+                        BridgeSay(msg);
+                    }
+                }
+                // Sync active tasks
+                vGameTasks& tasks = Level().GameTaskManager().GetGameTasks();
+                for (const auto& taskKey : tasks)
+                {
+                    if (taskKey.game_task != nullptr)
+                    {
+                        string256 msg;
+                        xr_sprintf(msg, "COOP_TASK|GIVE|%s", taskKey.game_task->m_ID.c_str());
+                        BridgeSay(msg);
+                        if (taskKey.game_task->GetTaskState() != eTaskStateInProgress)
+                        {
+                            xr_sprintf(msg, "COOP_TASK|STATE|%s|%u|%u",
+                                taskKey.game_task->m_ID.c_str(),
+                                taskKey.game_task->GetTaskState(),
+                                ROOT_TASK_OBJECTIVE);
+                            BridgeSay(msg);
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+
+        if (std::strcmp(rpc, "COOP_CUTSCENE|START") == 0)
+        {
+            g_remoteInCutscene = true;
+            Msg("* coop: remote peer entered cutscene - hiding remote dolls");
+            for (const auto& remote : g_remotes)
+            {
+                if (remote.gameId != 0xFFFF)
+                {
+                    if (g_pGameLevel != nullptr)
+                        Level().MapManager().RemoveMapLocationByObjectID(remote.gameId);
+                    CActor* doll = smart_cast<CActor*>(Level().Objects.net_Find(remote.gameId));
+                    if (doll != nullptr)
+                    {
+                        doll->setVisible(false);
+                        doll->setEnabled(false);
+                    }
+                }
+            }
+            continue;
+        }
+        if (std::strcmp(rpc, "COOP_CUTSCENE|STOP") == 0)
+        {
+            g_remoteInCutscene = false;
+            Msg("* coop: remote peer exited cutscene - restoring remote dolls");
+            if (!coop::ShouldHideRemoteDolls())
+            {
+                for (const auto& remote : g_remotes)
+                {
+                    if (remote.gameId != 0xFFFF)
+                    {
+                        if (g_pGameLevel != nullptr)
+                        {
+                            Level().MapManager().RemoveMapLocationByObjectID(remote.gameId);
+                            Level().MapManager().AddMapLocation("mp_friend_location", remote.gameId);
+                        }
+                        CActor* doll = smart_cast<CActor*>(Level().Objects.net_Find(remote.gameId));
+                        if (doll != nullptr)
+                        {
+                            doll->setVisible(true);
+                            doll->setEnabled(true);
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+
+        if (std::strncmp(rpc, "COOP_INFO|GIVE|", 15) == 0)
+        {
+            pcstr infoId = rpc + 15;
+            if (infoId && infoId[0] && !IsIgnoredInfoportion(infoId))
+            {
+                g_bApplyingRemoteSync = true;
+                g_actor->TransferInfo(infoId, true);
+                g_bApplyingRemoteSync = false;
+            }
+            continue;
+        }
+        if (std::strncmp(rpc, "COOP_INFO|DISABLE|", 18) == 0)
+        {
+            pcstr infoId = rpc + 18;
+            if (infoId && infoId[0] && !IsIgnoredInfoportion(infoId))
+            {
+                g_bApplyingRemoteSync = true;
+                g_actor->TransferInfo(infoId, false);
+                g_bApplyingRemoteSync = false;
+            }
+            continue;
+        }
+        if (std::strncmp(rpc, "COOP_TELEPORT|", 14) == 0)
+        {
+            // Only non-server clients accept teleport commands from the host authority,
+            // and only if not currently locked in a cutscene
+            if (!BridgeIsServer() && !IsInCutscene())
+            {
+                float tx = 0.f, ty = 0.f, tz = 0.f, tyaw = 0.f;
+                if (sscanf(rpc + 14, "%f|%f|%f|%f", &tx, &ty, &tz, &tyaw) >= 3 && g_actor != nullptr)
+                {
+                    Fvector targetPos{ tx, ty, tz };
+                    g_actor->Position().set(targetPos);
+                    g_actor->XFORM().c.set(targetPos);
+                    g_actor->Orientation().yaw = tyaw;
+                    g_actor->UnaffectedOrientation().yaw = tyaw;
+                    if (g_actor->cam_Active())
+                        g_actor->cam_Active()->Set(-tyaw, g_actor->Orientation().pitch, 0.f);
+                    g_actor->spatial_move();
+                    if (g_actor->character_physics_support() && g_actor->character_physics_support()->movement())
+                    {
+                        g_actor->character_physics_support()->movement()->SetPosition(targetPos);
+                        g_actor->character_physics_support()->movement()->SetVelocity(0.f, 0.f, 0.f);
+                    }
+                    Msg("* coop: received partner repositioning to (%.2f, %.2f, %.2f)", tx, ty, tz);
+                }
+            }
+            continue;
+        }
+        if (std::strncmp(rpc, "COOP_HP|", 8) == 0)
+        {
+            float remHp = 1.0f;
+            if (sscanf(rpc + 8, "%f", &remHp) == 1)
+            {
+                for (const auto& remote : g_remotes)
+                {
+                    if (remote.gameId != 0xFFFF)
+                    {
+                        CActor* doll = smart_cast<CActor*>(Level().Objects.net_Find(remote.gameId));
+                        if (doll != nullptr)
+                        {
+                            doll->SetfHealth(remHp);
+                        }
+                    }
+                }
+            }
+            continue;
+        }
+        if (std::strncmp(rpc, "COOP_TASK|GIVE|", 15) == 0)
+        {
+            pcstr taskId = rpc + 15;
+            if (taskId && taskId[0])
+            {
+                if (GEnv.ScriptEngine != nullptr)
+                {
+                    luabind::functor<void> rpcFn;
+                    if (GEnv.ScriptEngine->functor("coop_tasks.receive_task_rpc", rpcFn))
+                    {
+                        try {
+                            rpcFn("GIVE", taskId, 0, 0);
+                        } catch (...) {}
+                    }
+                }
+
+                if (!Level().GameTaskManager().HasGameTask(taskId, false))
+                {
+                    g_bApplyingRemoteSync = true;
+                    Level().GameTaskManager().GiveGameTaskToActor(taskId, 0, false);
+                    g_bApplyingRemoteSync = false;
+                }
+            }
+            continue;
+        }
+        if (std::strncmp(rpc, "COOP_TASK|STATE|", 16) == 0)
+        {
+            pcstr rest = rpc + 16;
+            string128 taskId;
+            u32 stateVal = 0;
+            u32 objVal = ROOT_TASK_OBJECTIVE;
+            if (sscanf(rest, "%127[^|]|%u|%u", taskId, &stateVal, &objVal) >= 2)
+            {
+                if (GEnv.ScriptEngine != nullptr)
+                {
+                    luabind::functor<void> rpcFn;
+                    if (GEnv.ScriptEngine->functor("coop_tasks.receive_task_rpc", rpcFn))
+                    {
+                        try {
+                            rpcFn("STATE", (pcstr)taskId, (int)stateVal, (int)objVal);
+                        } catch (...) {}
+                    }
+                }
+
+                if (CGameTask* t = Level().GameTaskManager().HasGameTask(taskId, false))
+                {
+                    g_bApplyingRemoteSync = true;
+                    Level().GameTaskManager().SetTaskState(t, (ETaskState)stateVal, (TASK_OBJECTIVE_ID)objVal);
+                    g_bApplyingRemoteSync = false;
+                }
+            }
+            continue;
+        }
+    }
+}
 
 void PublishLocalPlayer(CActor* actor)
 {
@@ -765,9 +1449,59 @@ void PublishLocalPlayer(CActor* actor)
 
     const Fvector& position = actor->Position();
     BridgePublishLocalPlayer(position.x, position.y, position.z,
-        actor->Orientation().yaw,
+        actor->Orientation().yaw, actor->Orientation().pitch,
         static_cast<u16>(actor->MovingState() & 0x7FFF));
     PublishLocalInput(actor, driveMstate);
+
+    // Synchronize local health with remote peer
+    static float s_lastPublishedHealth = -1.f;
+    static u32 s_lastHealthTime = 0;
+    const float currentHealth = actor->GetfHealth();
+    if (std::abs(currentHealth - s_lastPublishedHealth) > 0.01f || (Device.dwTimeGlobal - s_lastHealthTime > 400))
+    {
+        s_lastPublishedHealth = currentHealth;
+        s_lastHealthTime = Device.dwTimeGlobal;
+        string64 hpMsg;
+        xr_sprintf(hpMsg, "COOP_HP|%.2f", currentHealth);
+        BridgeSay(hpMsg);
+    }
+
+    // Detect fast travel / guide NPC jumps (> 25m) and pull partner along (Host authority only)
+    static Fvector s_lastActorPos{ 0.f, 0.f, 0.f };
+    static bool s_hasLastPos = false;
+    static u32 s_lastFastTravelTime = 0;
+    const bool levelReady = (Device.dwTimeGlobal > 4000 && Device.dwPrecacheFrame == 0);
+    if (s_hasLastPos && !IsInCutscene() && levelReady && BridgeIsServer())
+    {
+        const float jumpDist = actor->Position().distance_to(s_lastActorPos);
+        if (jumpDist > 25.0f && (Device.dwTimeGlobal - s_lastFastTravelTime > 3000))
+        {
+            s_lastFastTravelTime = Device.dwTimeGlobal;
+            Msg("* coop: host fast-travel or large displacement detected (%.1f m), synchronizing partner...", jumpDist);
+            Fvector safePos = actor->Position();
+            safePos.x += 1.5f;
+            string256 tmsg;
+            xr_sprintf(tmsg, "COOP_TELEPORT|%.2f|%.2f|%.2f|%.2f", safePos.x, safePos.y, safePos.z, actor->Orientation().yaw);
+            BridgeSay(tmsg);
+        }
+    }
+    s_lastActorPos = actor->Position();
+    s_hasLastPos = true;
+
+    // Client world time & weather cycle synchronization with Host
+    if (!BridgeIsServer() && BridgeActive())
+    {
+        const u64 serverGameTime = BridgeServerGameTime();
+        if (serverGameTime > 0)
+        {
+            const u64 localGameTime = Level().GetGameTime();
+            const s64 diff = static_cast<s64>(serverGameTime) - static_cast<s64>(localGameTime);
+            if (diff > 5000 || diff < -5000)
+            {
+                Level().SetGameTimeFactor(serverGameTime, Level().GetGameTimeFactor());
+            }
+        }
+    }
 
     // Invoke Lua coop campaign hooks
     if (GEnv.ScriptEngine != nullptr)
@@ -793,6 +1527,8 @@ void OnLevelStop()
 {
     g_localSpawnPublished = false;
     g_levelName[0] = 0;
+    g_clientSyncRequested = false;
+    g_remoteInCutscene = false;
     ResetRemoteEntities();
 }
 
@@ -828,7 +1564,7 @@ bool IsPlayerOrDoll(IGameObject* obj)
 
 void OnRender()
 {
-    if (g_pGameLevel == nullptr)
+    if (g_pGameLevel == nullptr || IsInCutscene())
         return;
 
     for (const auto& remote : g_remotes)
@@ -841,7 +1577,7 @@ void OnRender()
             continue;
 
         CActor* doll = smart_cast<CActor*>(object);
-        if (doll == nullptr || !doll->g_Alive())
+        if (doll == nullptr || !doll->g_Alive() || !doll->getVisible())
             continue;
 
         char peerName[64] = "Partner";

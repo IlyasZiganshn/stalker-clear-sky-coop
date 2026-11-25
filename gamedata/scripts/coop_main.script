@@ -32,6 +32,11 @@ function init()
         coop_cutscenes.init()
     end
 
+    -- Hook in-game pre-match lobby
+    if coop_lobby and coop_lobby.init then
+        coop_lobby.init()
+    end
+
     printf("[coop_main] Co-op campaign layer initialized.")
 end
 
@@ -43,12 +48,26 @@ function update(delta)
     if coop_tasks and coop_tasks.update then
         coop_tasks.update(delta)
     end
+
+    if coop_cutscenes and coop_cutscenes.update then
+        coop_cutscenes.update(delta)
+    end
+
+    if coop_lobby and coop_lobby.update then
+        coop_lobby.update(delta)
+    end
 end
 
 function set_role(host_mode)
+    local changed = (not session_active) or (is_host ~= host_mode)
     is_host = host_mode
     session_active = true
-    printf("[coop_main] Role set: is_host=%s", tostring(is_host))
+    if coop_lobby and coop_lobby.set_role then
+        coop_lobby.set_role(host_mode)
+    end
+    if changed then
+        printf("[coop_main] Role set: is_host=%s", tostring(is_host))
+    end
 end
 
 function is_coop_host()

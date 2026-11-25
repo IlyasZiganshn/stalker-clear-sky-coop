@@ -1,5 +1,19 @@
+diff --git a/src/xrGame/Actor.cpp b/src/xrGame/Actor.cpp
+index 7d1657f..b6b91ef 100644
+--- a/src/xrGame/Actor.cpp
++++ b/src/xrGame/Actor.cpp
+@@ -1486,7 +1486,8 @@ void CActor::shedule_Update(u32 DT)
+             }
+             else
+             {
+-                if (m_pPersonWeLookingAt && pEntityAlive->g_Alive() && m_pPersonWeLookingAt->IsTalkEnabled())
++                if (m_pPersonWeLookingAt && pEntityAlive && pEntityAlive->g_Alive() &&
++                    (m_pPersonWeLookingAt->IsTalkEnabled() || coop::IsRemoteDollId(m_pPersonWeLookingAt->object_id())))
+                 {
+                     m_sDefaultObjAction = m_sCharacterUseAction;
+                 }
 diff --git a/src/xrGame/ActorInput.cpp b/src/xrGame/ActorInput.cpp
-index 47d79d2..63ca66b 100644
+index 47d79d2..bdccd3e 100644
 --- a/src/xrGame/ActorInput.cpp
 +++ b/src/xrGame/ActorInput.cpp
 @@ -31,6 +31,7 @@
@@ -10,24 +24,27 @@ index 47d79d2..63ca66b 100644
  
  bool g_bAutoClearCrouch = true;
  
-@@ -682,6 +683,17 @@ void CActor::ActorUse()
-     {
-         if (m_pPersonWeLookingAt)
-         {
-+            // Co-op partner doll: direct inventory exchange without talk crash
-+            if (coop::IsRemoteDollId(m_pPersonWeLookingAt->object_id()))
-+            {
-+                CUIGameSP* pGameSP = smart_cast<CUIGameSP*>(CurrentGameUI());
-+                if (pGameSP)
-+                {
-+                    pGameSP->StartCarBody(this, m_pPersonWeLookingAt);
-+                }
-+                return;
-+            }
-+
-             CEntityAlive* pEntityAliveWeLookingAt = smart_cast<CEntityAlive*>(m_pPersonWeLookingAt);
+@@ -660,6 +661,20 @@ void CActor::ActorUse()
+     if (character_physics_support()->movement()->PHCapture())
+         character_physics_support()->movement()->PHReleaseObject();
  
-             VERIFY(pEntityAliveWeLookingAt);
++    // Co-op partner doll: direct inventory exchange without talk crash or script use interference
++    if ((m_pPersonWeLookingAt && coop::IsRemoteDollId(m_pPersonWeLookingAt->object_id())) ||
++        (m_pObjectWeLookingAt && coop::IsRemoteDollId(m_pObjectWeLookingAt->ID())))
++    {
++        CUIGameSP* pGameSP = smart_cast<CUIGameSP*>(CurrentGameUI());
++        if (pGameSP)
++        {
++            CInventoryOwner* invOwner = m_pPersonWeLookingAt ? m_pPersonWeLookingAt : m_pObjectWeLookingAt->cast_inventory_owner();
++            if (invOwner)
++                pGameSP->StartCarBody(this, invOwner);
++        }
++        return;
++    }
++
+     if (m_pUsableObject && NULL == m_pObjectWeLookingAt->cast_inventory_item())
+     {
+         m_pUsableObject->use(this);
 diff --git a/src/xrGame/actor_communication.cpp b/src/xrGame/actor_communication.cpp
 index bf44a4d..0f7f3a8 100644
 --- a/src/xrGame/actor_communication.cpp
@@ -51,10 +68,10 @@ index bf44a4d..0f7f3a8 100644
      if (talk_partner->OfferTalk(this))
      {
 diff --git a/src/xrGame/ui/UICharacterInfo.cpp b/src/xrGame/ui/UICharacterInfo.cpp
-index 667e56d..96c63fa 100644
+index 667e56d..8d1952e 100644
 --- a/src/xrGame/ui/UICharacterInfo.cpp
 +++ b/src/xrGame/ui/UICharacterInfo.cpp
-@@ -20,6 +20,7 @@
+@@ -20,18 +20,24 @@
  #include "xrServer.h"
  #include "xrServerEntities/xrServer_Objects_ALife_Monsters.h"
  #include "UIHelper.h"
@@ -62,24 +79,47 @@ index 667e56d..96c63fa 100644
  
  using namespace InventoryUtilities;
  
-@@ -128,6 +129,16 @@ void CUICharacterInfo::InitCharacter(u16 id)
+ CSE_ALifeTraderAbstract* ch_info_get_from_id(u16 id)
+ {
++    if (coop::IsRemoteDollId(id))
++        return nullptr;
++
+     if (ai().get_alife() && ai().get_game_graph())
+     {
+-        return smart_cast<CSE_ALifeTraderAbstract*>(ai().alife().objects().object(id));
++        return smart_cast<CSE_ALifeTraderAbstract*>(ai().alife().objects().object(id, true));
+     }
+     else
+     {
+-        return smart_cast<CSE_ALifeTraderAbstract*>(Level().Server->GetGameState()->get_entity_from_eid(id));
++        if (Level().Server && Level().Server->GetGameState())
++            return smart_cast<CSE_ALifeTraderAbstract*>(Level().Server->GetGameState()->get_entity_from_eid(id));
++        return nullptr;
+     }
+ }
+ 
+@@ -127,7 +133,20 @@ void CUICharacterInfo::InitCharacter(u16 id)
+ {
      m_ownerID = id;
  
++    if (coop::IsRemoteDollId(m_ownerID))
++    {
++        char peerName[64] = "Partner";
++        coop::GetRemotePeerName(m_ownerID, peerName, sizeof(peerName));
++        InitCharacterMP(peerName, "ui_inGame2_Stalker_1");
++        return;
++    }
++
      CSE_ALifeTraderAbstract* T = ch_info_get_from_id(m_ownerID);
 +    if (!T)
 +    {
-+        char peerName[64] = "Partner";
-+        if (coop::IsRemoteDollId(m_ownerID))
-+        {
-+            coop::GetRemotePeerName(m_ownerID, peerName, sizeof(peerName));
-+        }
-+        InitCharacterMP(peerName, "ui_inGame2_Stalker_1");
++        InitCharacterMP("Unknown", "ui_inGame2_Stalker_1");
 +        return;
 +    }
  
      CCharacterInfo chInfo;
      chInfo.Init(T);
-@@ -277,6 +288,12 @@ void CUICharacterInfo::ResetAllStrings()
+@@ -277,6 +296,12 @@ void CUICharacterInfo::ResetAllStrings()
  
  void CUICharacterInfo::UpdateRelation()
  {
@@ -92,7 +132,7 @@ index 667e56d..96c63fa 100644
      if (!m_icons[eRelation] || !m_icons[eRelationCaption])
      {
          return;
-@@ -294,6 +311,11 @@ void CUICharacterInfo::UpdateRelation()
+@@ -294,6 +319,11 @@ void CUICharacterInfo::UpdateRelation()
  
          CSE_ALifeTraderAbstract* T = ch_info_get_from_id(m_ownerID);
          CSE_ALifeTraderAbstract* TA = ch_info_get_from_id(Actor()->ID());
@@ -104,7 +144,7 @@ index 667e56d..96c63fa 100644
  
          SetRelation(RELATION_REGISTRY().GetRelationType(T, TA), RELATION_REGISTRY().GetAttitude(T, TA));
      }
-@@ -308,6 +330,9 @@ void CUICharacterInfo::Update()
+@@ -308,6 +338,9 @@ void CUICharacterInfo::Update()
  {
      inherited::Update();
  

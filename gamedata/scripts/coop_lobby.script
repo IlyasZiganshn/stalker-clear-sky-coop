@@ -1,0 +1,603 @@
+-- S.T.A.L.K.E.R.: Clear Sky Co-op In-Game Pre-Match Lobby
+-- Handles in-game skin selection, per-player "Ready" toggle, saved-game detection,
+-- and Host match start gating ("Continue" / "New Game").
+
+local SKINS = {
+    { id = "cs_1",    label = "CS-1 Patrol Jacket",     visual = "actors\\stalker_nebo\\stalker_nebo_1" },
+    { id = "cs_2",    label = "CS-2 Tactical Suit",     visual = "actors\\stalker_nebo\\stalker_nebo_2" },
+    { id = "cs_3",    label = "CS-3a Assault Armor",    visual = "actors\\stalker_nebo\\stalker_nebo_3" },
+    { id = "cs_seva", label = "CS-4 SEVA Closed-Cycle", visual = "actors\\stalker_nebo\\stalker_nebo_seva" },
+}
+
+local is_initialized = false
+local is_host = false
+local role_known = false
+local lobby_active = false
+local lobby_finished = false
+local lobby_wnd = nil
+
+local local_skin = nil
+local local_ready = false
+local has_saved_game = false
+local latest_save_name = nil
+local last_save_scan_time = 0
+local last_cmd_poll_time = 0
+local last_remote_sig = ""
+local input_locked = false
+local pending_continue_save = nil
+local pending_continue_at = 0
+
+local function lprint(fmt, ...)
+    local ok, msg = pcall(string.format, fmt, ...)
+    if not ok then msg = tostring(fmt) end
+    if log1 then
+        log1("* " .. msg)
+        if flush1 then flush1() end
+    elseif log then
+        log(msg)
+    end
+end
+
+local function get_skin_def(skin_id)
+    for _, sk in ipairs(SKINS) do
+        if sk.id == skin_id then
+            return sk
+        end
+    end
+    return nil
+end
+
+local function clear_lobby_infos()
+    if not db or not db.actor then return end
+    local actor = db.actor
+    local infos = {
+        "coop_lh_ready", "coop_lc_ready",
+        "coop_l_start_new", "coop_l_start_cont",
+        "coop_lh_skin_cs_1", "coop_lh_skin_cs_2", "coop_lh_skin_cs_3", "coop_lh_skin_cs_seva",
+        "coop_lc_skin_cs_1", "coop_lc_skin_cs_2", "coop_lc_skin_cs_3", "coop_lc_skin_cs_seva",
+    }
+    for _, id in ipairs(infos) do
+        if actor:has_info(id) then
+            actor:disable_info_portion(id)
+        end
+    end
+end
+
+function detect_saved_game()
+    has_saved_game = false
+    latest_save_name = nil
+
+    local fs = getFS()
+    if not fs then return false, nil end
+
+    local ok, flist = pcall(function()
+        return fs:file_list_open_ex("$game_saves$", FS.FS_ListFiles, "*.sav")
+    end)
+    if not ok then
+        lprint("[coop_lobby] file_list_open_ex failed: %s", tostring(flist))
+    elseif flist and flist:Size() > 0 then
+        flist:Sort(FS.FS_sort_by_modif_down)
+        local fname = flist:GetAt(0):NameShort()
+        if fname and fname ~= "" then
+            latest_save_name = string.gsub(fname, "%.sav$", "")
+            has_saved_game = true
+        end
+    end
+
+    if not has_saved_game then
+        local ok2, flist2 = pcall(function()
+            return fs:file_list_open("$game_saves$", FS.FS_ListFiles)
+        end)
+        if ok2 and flist2 then
+            local cnt = flist2:Size()
+            for i = 0, cnt - 1 do
+                local fname = flist2:GetAt(i)
+                if fname and string.match(string.lower(fname), "%.sav$") then
+                    latest_save_name = string.gsub(fname, "%.sav$", "")
+                    has_saved_game = true
+                    break
+                end
+            end
+            pcall(function() flist2:Free() end)
+        elseif not ok2 then
+            lprint("[coop_lobby] file_list_open fallback failed: %s", tostring(flist2))
+        end
+    end
+    return has_saved_game, latest_save_name
+end
+
+local function get_remote_skin()
+    if not db or not db.actor then return nil end
+    local prefix = is_host and "coop_lc_skin_" or "coop_lh_skin_"
+    for _, sk in ipairs(SKINS) do
+        if db.actor:has_info(prefix .. sk.id) then
+            return sk.id
+        end
+    end
+    return nil
+end
+
+local function is_remote_ready()
+    if not db or not db.actor then return false end
+    local info = is_host and "coop_lc_ready" or "coop_lh_ready"
+    return db.actor:has_info(info)
+end
+
+function all_players_ready()
+    local remote_skin = get_remote_skin()
+    local remote_ready = is_remote_ready()
+    return (local_skin ~= nil) and local_ready and (remote_skin ~= nil) and remote_ready
+end
+
+local function apply_selected_skin(skin_id)
+    local sk = get_skin_def(skin_id)
+    if not sk or not db or not db.actor then return end
+
+    local fs = getFS()
+    local ogf_path = sk.visual .. ".ogf"
+    if fs and fs:exist("$game_meshes$", ogf_path) then
+        pcall(function()
+            db.actor:set_visual_name(sk.visual)
+        end)
+        lprint("[coop_lobby] Applied in-game actor skin visual: %s", sk.visual)
+    else
+        lprint("[coop_lobby] Selected skin '%s' (%s); mesh '%s' checked", sk.id, sk.label, ogf_path)
+    end
+end
+
+function select_skin(skin_id)
+    local sk = get_skin_def(skin_id)
+    if not sk or not db or not db.actor then
+        lprint("[coop_lobby] Rejected invalid skin: %s", tostring(skin_id))
+        return false
+    end
+
+    local prefix = is_host and "coop_lh_skin_" or "coop_lc_skin_"
+    local ready_info = is_host and "coop_lh_ready" or "coop_lc_ready"
+
+    for _, item in ipairs(SKINS) do
+        local inf = prefix .. item.id
+        if item.id == sk.id then
+            if not db.actor:has_info(inf) then
+                db.actor:give_info_portion(inf)
+            end
+        elseif db.actor:has_info(inf) then
+            db.actor:disable_info_portion(inf)
+        end
+    end
+
+    local_skin = sk.id
+    -- Changing skin resets Ready state so player must confirm Ready again
+    if local_ready then
+        local_ready = false
+        if db.actor:has_info(ready_info) then
+            db.actor:disable_info_portion(ready_info)
+        end
+    end
+
+    lprint("[coop_lobby] %s selected skin '%s' (%s), Ready=false",
+        is_host and "HOST" or "CLIENT", sk.id, sk.label)
+    if lobby_wnd then lobby_wnd:RefreshState() end
+    return true
+end
+
+function set_ready(want_ready)
+    if not db or not db.actor then return false end
+    if want_ready and not local_skin then
+        lprint("[coop_lobby] Blocked Ready: player must choose a skin first")
+        return false
+    end
+
+    local ready_info = is_host and "coop_lh_ready" or "coop_lc_ready"
+    local_ready = (want_ready == true)
+
+    if local_ready then
+        if not db.actor:has_info(ready_info) then
+            db.actor:give_info_portion(ready_info)
+        end
+    else
+        if db.actor:has_info(ready_info) then
+            db.actor:disable_info_portion(ready_info)
+        end
+    end
+
+    lprint("[coop_lobby] %s Ready=%s", is_host and "HOST" or "CLIENT", tostring(local_ready))
+    if lobby_wnd then lobby_wnd:RefreshState() end
+    return true
+end
+
+local function close_lobby_and_enter_game()
+    lobby_active = false
+    lobby_finished = true
+
+    if local_skin then
+        apply_selected_skin(local_skin)
+    end
+
+    if lobby_wnd then
+        pcall(function() lobby_wnd:HideDialog() end)
+        lobby_wnd = nil
+    end
+
+    if input_locked and level and level.enable_input then
+        level.enable_input()
+        if level.show_indicators then level.show_indicators() end
+        input_locked = false
+    end
+end
+
+function host_click_continue()
+    if not is_host then
+        lprint("[coop_lobby] Ignored Continue on client")
+        return false
+    end
+    detect_saved_game()
+    if not has_saved_game or not latest_save_name then
+        lprint("[coop_lobby] Blocked Continue: no saved game exists")
+        return false
+    end
+    if not all_players_ready() then
+        lprint("[coop_lobby] Blocked Continue: not all players are Ready")
+        return false
+    end
+
+    lprint("[coop_lobby] All players Ready -> Host starting Continue (%s)", latest_save_name)
+    if db and db.actor and not db.actor:has_info("coop_l_start_cont") then
+        db.actor:give_info_portion("coop_l_start_cont")
+    end
+
+    local save_to_load = latest_save_name
+    close_lobby_and_enter_game()
+    -- Give the network tick ~350ms to replicate coop_l_start_cont to peers before reloading the level
+    pending_continue_save = save_to_load
+    pending_continue_at = (time_global and time_global() or 0) + 350
+    return true
+end
+
+function host_click_new_game()
+    if not is_host then
+        lprint("[coop_lobby] Ignored New Game on client")
+        return false
+    end
+    detect_saved_game()
+    if has_saved_game then
+        lprint("[coop_lobby] Blocked New Game: saved game exists (only Continue is allowed)")
+        return false
+    end
+    if not all_players_ready() then
+        lprint("[coop_lobby] Blocked New Game: not all players are Ready")
+        return false
+    end
+
+    lprint("[coop_lobby] All players Ready -> Host starting New Game")
+    if db and db.actor and not db.actor:has_info("coop_l_start_new") then
+        db.actor:give_info_portion("coop_l_start_new")
+    end
+
+    close_lobby_and_enter_game()
+    return true
+end
+
+-- In-Game CUIScriptWnd Lobby UI
+class "UICoopLobby" (CUIScriptWnd)
+
+function UICoopLobby:__init() super()
+    self:InitControls()
+end
+
+function UICoopLobby:__finalize()
+end
+
+function UICoopLobby:InitControls()
+    self:SetWndRect(Frect():set(0, 0, 1024, 768))
+
+    local bg = CUIStatic()
+    bg:SetAutoDelete(true)
+    bg:Init(112, 92, 800, 560)
+    pcall(function() bg:InitTexture("ui\\ui_noise", false) end)
+    bg:SetColor(GetARGB(235, 16, 24, 34))
+    self:AttachChild(bg)
+
+    self.lbl_title = CUIStatic()
+    self.lbl_title:SetAutoDelete(true)
+    self.lbl_title:Init(132, 108, 760, 32)
+    self.lbl_title:SetText("CLEAR SKY CO-OP // IN-GAME LOBBY")
+    self.lbl_title:SetTextColor(255, 0, 180, 255)
+    self:AttachChild(self.lbl_title)
+
+    self.lbl_roster = CUIStatic()
+    self.lbl_roster:SetAutoDelete(true)
+    self.lbl_roster:Init(132, 152, 370, 260)
+    self.lbl_roster:SetTextComplexMode(true)
+    self.lbl_roster:SetTextColor(255, 235, 240, 248)
+    self:AttachChild(self.lbl_roster)
+
+    self.lbl_status = CUIStatic()
+    self.lbl_status:SetAutoDelete(true)
+    self.lbl_status:Init(132, 430, 370, 50)
+    self.lbl_status:SetTextComplexMode(true)
+    self.lbl_status:SetTextColor(255, 245, 180, 40)
+    self:AttachChild(self.lbl_status)
+
+    self.lbl_skins_hdr = CUIStatic()
+    self.lbl_skins_hdr:SetAutoDelete(true)
+    self.lbl_skins_hdr:Init(526, 152, 360, 26)
+    self.lbl_skins_hdr:SetText("IN-GAME SKIN SETTINGS:")
+    self.lbl_skins_hdr:SetTextColor(255, 160, 200, 230)
+    self:AttachChild(self.lbl_skins_hdr)
+
+    self.skin_buttons = {}
+    for i, sk in ipairs(SKINS) do
+        local btn = CUIButton()
+        btn:SetAutoDelete(true)
+        btn:Init(526, 184 + (i - 1) * 56, 360, 46)
+        btn:SetText(sk.label)
+        btn:SetTextColor(255, 240, 245, 252)
+        self:AttachChild(btn)
+        local ctrl_name = "btn_skin_" .. sk.id
+        self:Register(btn, ctrl_name)
+        local chosen_id = sk.id
+        self:AddCallback(ctrl_name, ui_events.BUTTON_CLICKED, function()
+            select_skin(chosen_id)
+        end, self)
+        self.skin_buttons[sk.id] = btn
+    end
+
+    -- Exact button label: "Ready"
+    self.btn_ready = CUIButton()
+    self.btn_ready:SetAutoDelete(true)
+    self.btn_ready:Init(526, 430, 360, 48)
+    self.btn_ready:SetText("Ready")
+    self.btn_ready:SetTextColor(255, 255, 255, 255)
+    self:AttachChild(self.btn_ready)
+    self:Register(self.btn_ready, "btn_ready")
+    self:AddCallback("btn_ready", ui_events.BUTTON_CLICKED, function()
+        set_ready(not local_ready)
+    end, self)
+
+    -- Exact button labels: "Continue" and "New Game"
+    self.btn_continue = CUIButton()
+    self.btn_continue:SetAutoDelete(true)
+    self.btn_continue:Init(132, 548, 370, 50)
+    self.btn_continue:SetText("Continue")
+    self.btn_continue:SetTextColor(255, 255, 255, 255)
+    self:AttachChild(self.btn_continue)
+    self:Register(self.btn_continue, "btn_continue")
+    self:AddCallback("btn_continue", ui_events.BUTTON_CLICKED, function()
+        host_click_continue()
+    end, self)
+
+    self.btn_new_game = CUIButton()
+    self.btn_new_game:SetAutoDelete(true)
+    self.btn_new_game:Init(526, 548, 360, 50)
+    self.btn_new_game:SetText("New Game")
+    self.btn_new_game:SetTextColor(255, 255, 255, 255)
+    self:AttachChild(self.btn_new_game)
+    self:Register(self.btn_new_game, "btn_new_game")
+    self:AddCallback("btn_new_game", ui_events.BUTTON_CLICKED, function()
+        host_click_new_game()
+    end, self)
+
+    self:RefreshState()
+end
+
+function UICoopLobby:RefreshState()
+    local r_skin = get_remote_skin()
+    local r_ready = is_remote_ready()
+    local host_skin = is_host and local_skin or r_skin
+    local host_ready = is_host and local_ready or r_ready
+    local client_skin = is_host and r_skin or local_skin
+    local client_ready = is_host and r_ready or local_ready
+
+    local h_def = host_skin and get_skin_def(host_skin) or nil
+    local c_def = client_skin and get_skin_def(client_skin) or nil
+
+    local roster_txt = string.format(
+        "HOST:\n  Skin: %s\n  State: %s\n\nCLIENT:\n  Skin: %s\n  State: %s",
+        h_def and h_def.label or "Not selected",
+        host_ready and "READY" or "NOT READY",
+        c_def and c_def.label or "Not selected",
+        client_ready and "READY" or "NOT READY"
+    )
+    self.lbl_roster:SetText(roster_txt)
+
+    for _, sk in ipairs(SKINS) do
+        local btn = self.skin_buttons[sk.id]
+        if btn then
+            if local_skin == sk.id then
+                btn:SetText("[SELECTED] " .. sk.label)
+                btn:SetTextColor(255, 0, 210, 255)
+            else
+                btn:SetText(sk.label)
+                btn:SetTextColor(255, 220, 228, 238)
+            end
+        end
+    end
+
+    self.btn_ready:Show(true)
+    self.btn_ready:Enable(local_skin ~= nil)
+
+    local ready_all = all_players_ready()
+    if not local_skin then
+        self.lbl_status:SetText("Choose a skin on the right, then click Ready.")
+    elseif not ready_all then
+        self.lbl_status:SetText("Waiting for all players to click Ready...")
+    elseif is_host then
+        self.lbl_status:SetText(has_saved_game and "All Ready! Click Continue." or "All Ready! Click New Game.")
+    else
+        self.lbl_status:SetText("All Ready! Waiting for Host to start...")
+    end
+
+    if not is_host then
+        self.btn_continue:Show(false)
+        self.btn_new_game:Show(false)
+        return
+    end
+
+    if has_saved_game then
+        -- Saved game exists: show ONLY "Continue"
+        self.btn_continue:Show(true)
+        self.btn_continue:Enable(ready_all)
+        self.btn_new_game:Show(false)
+    else
+        -- No saved game: show BOTH "Continue" and "New Game"
+        self.btn_continue:Show(true)
+        self.btn_continue:Enable(false)
+        self.btn_new_game:Show(true)
+        self.btn_new_game:Enable(ready_all)
+    end
+end
+
+function UICoopLobby:OnKeyboard(dik, keyboard_action)
+    if CUIScriptWnd.OnKeyboard(self, dik, keyboard_action) then
+        return true
+    end
+    return false
+end
+
+local function poll_lobby_cmd_file()
+    local fs = getFS()
+    if not fs then return end
+
+    local full_path = fs:update_path("$app_data_root$", "coop_lobby_cmd.txt")
+    local f = io.open(full_path, "r")
+    if not f then return end
+    local content = f:read("*all") or ""
+    f:close()
+    os.remove(full_path)
+
+    for line in string.gmatch(content, "[^\r\n]+") do
+        local cmd = line:match("^%s*(.-)%s*$")
+        if cmd ~= "" then
+            lprint("[coop_lobby] Exec lobby cmd: %s", cmd)
+            local skin_arg = cmd:match("^skin%s+(%S+)$")
+            if skin_arg then
+                select_skin(skin_arg)
+            elseif cmd == "ready" or cmd == "ready 1" then
+                set_ready(true)
+            elseif cmd == "ready 0" or cmd == "unready" then
+                set_ready(false)
+            elseif cmd == "continue" then
+                host_click_continue()
+            elseif cmd == "new_game" or cmd == "newgame" then
+                host_click_new_game()
+            end
+        end
+    end
+end
+
+local function should_open_lobby()
+    local fs = getFS()
+    if not fs then return false end
+    local full_path = fs:update_path("$app_data_root$", "coop_lobby_mode")
+    local f = io.open(full_path, "r")
+    if f then
+        f:close()
+        os.remove(full_path)
+        return true
+    end
+    return false
+end
+
+function set_role(host_mode)
+    local role_was_known = role_known
+    local new_host = (host_mode == true)
+    role_known = true
+    local changed = (not role_was_known) or (is_host ~= new_host)
+    is_host = new_host
+    if is_host then
+        detect_saved_game()
+    end
+    if changed then
+        lprint("[coop_lobby] Role confirmed: is_host=%s (has_saved_game=%s)",
+            tostring(is_host), tostring(has_saved_game))
+    end
+    if lobby_wnd then lobby_wnd:RefreshState() end
+end
+
+function init()
+    if is_initialized then return end
+    is_initialized = true
+
+    if should_open_lobby() then
+        lobby_active = true
+        lobby_finished = false
+        clear_lobby_infos()
+        detect_saved_game()
+        lprint("[coop_lobby] In-game pre-match lobby activated (has_saved_game=%s, save=%s)",
+            tostring(has_saved_game), tostring(latest_save_name))
+    end
+end
+
+function update(delta)
+    if pending_continue_save then
+        local now_ms = time_global and time_global() or 0
+        if now_ms >= pending_continue_at then
+            local save_name = pending_continue_save
+            pending_continue_save = nil
+            local console = get_console()
+            if console then
+                lprint("[coop_lobby] Executing Host save load: %s", save_name)
+                console:execute("load " .. save_name)
+            end
+        end
+    end
+
+    if not is_initialized then init() end
+    if not lobby_active or lobby_finished or not db or not db.actor then return end
+    -- Wait for coop_main.set_role(BridgeIsServer()) before opening UI or handling commands
+    if not role_known then return end
+
+    if not input_locked and level and level.disable_input then
+        level.disable_input()
+        if level.hide_indicators then level.hide_indicators() end
+        input_locked = true
+    end
+
+    if not lobby_wnd then
+        if is_host then detect_saved_game() end
+        local ok, wnd = pcall(function()
+            local w = UICoopLobby()
+            w:ShowDialog(true)
+            return w
+        end)
+        if ok and wnd then
+            lobby_wnd = wnd
+            lprint("[coop_lobby] In-game UICoopLobby opened (has_saved_game=%s, Continue=%s, NewGame=%s, Ready=%s)",
+                tostring(has_saved_game),
+                tostring(lobby_wnd.btn_continue:IsShown()),
+                tostring(lobby_wnd.btn_new_game:IsShown()),
+                tostring(lobby_wnd.btn_ready:IsShown()))
+        else
+            lprint("[coop_lobby] ERROR opening UICoopLobby: %s", tostring(wnd))
+            lobby_active = false
+            return
+        end
+    end
+
+    local r_sig = tostring(get_remote_skin()) .. "|" .. tostring(is_remote_ready())
+    if r_sig ~= last_remote_sig then
+        last_remote_sig = r_sig
+        if lobby_wnd then lobby_wnd:RefreshState() end
+    end
+
+    local now = time_global and time_global() or 0
+    if now - last_save_scan_time > 1500 then
+        last_save_scan_time = now
+        if is_host then detect_saved_game() end
+        if lobby_wnd then lobby_wnd:RefreshState() end
+    end
+
+    if now - last_cmd_poll_time > 150 then
+        last_cmd_poll_time = now
+        poll_lobby_cmd_file()
+    end
+
+    -- Client watches for Host match start signal
+    if not is_host then
+        if db.actor:has_info("coop_l_start_new") or db.actor:has_info("coop_l_start_cont") then
+            lprint("[coop_lobby] Client received Host start signal -> entering gameplay")
+            close_lobby_and_enter_game()
+        end
+    end
+end

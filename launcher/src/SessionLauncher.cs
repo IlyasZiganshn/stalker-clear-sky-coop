@@ -6,6 +6,17 @@ namespace ClearSkyCoop.Launcher
 {
     public static class SessionLauncher
     {
+        private static void EnableInGameLobbyFlag(string gamePath)
+        {
+            try
+            {
+                string appData = Path.Combine(gamePath, "_appdata_");
+                if (!Directory.Exists(appData)) Directory.CreateDirectory(appData);
+                File.WriteAllText(Path.Combine(appData, "coop_lobby_mode"), "1");
+            }
+            catch { }
+        }
+
         public static string BuildHostArgs(int port, bool skipIntro = false)
         {
             string intro = skipIntro ? " -nogameintro" : "";
@@ -49,9 +60,11 @@ namespace ClearSkyCoop.Launcher
                     FileName = exe,
                     Arguments = BuildHostArgs(port, skipIntro),
                     WorkingDirectory = gamePath,
-                    UseShellExecute = true
+                    UseShellExecute = false,
+                    CreateNoWindow = false
                 };
 
+                EnableInGameLobbyFlag(gamePath);
                 return Process.Start(psi);
             }
             catch (Exception ex)
@@ -90,9 +103,11 @@ namespace ClearSkyCoop.Launcher
                     FileName = exe,
                     Arguments = BuildJoinArgs(hostIp, port, playerName, skipIntro),
                     WorkingDirectory = gamePath,
-                    UseShellExecute = true
+                    UseShellExecute = false,
+                    CreateNoWindow = false
                 };
 
+                EnableInGameLobbyFlag(gamePath);
                 return Process.Start(psi);
             }
             catch (Exception ex)

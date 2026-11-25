@@ -4,6 +4,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <deque>
 #include <memory>
 #include <string>
 #include <vector>
@@ -23,7 +24,7 @@ namespace
 {
 constexpr u32 kBuildHash = 0x43534B59; // "CSKY"
 constexpr u32 kHostNetId = 1;
-constexpr u32 kPublishIntervalMs = 50;
+constexpr u32 kPublishIntervalMs = 25;
 constexpr u32 kInputIntervalMs = 16;
 constexpr u32 kWorldBroadcastMs = 1000;
 constexpr u32 kRemoteTimeoutMs = 2000;
@@ -33,8 +34,8 @@ constexpr u32 kSpawnResendMs = 2000;
 constexpr u32 kInputTimeoutMs = 500;
 // A client that hears nothing for this long gets one warning in the log.
 constexpr u32 kHandshakeWarnMs = 5000;
-// Remote players are rendered this far in the past, between two 20 Hz samples.
-constexpr u32 kPlayerInterpDelayMs = 80;
+// Remote players are rendered this far in the past, across multiple 40 Hz samples.
+constexpr u32 kPlayerInterpDelayMs = 70;
 constexpr u32 kMaxRemotes = 8;
 
 struct Bridge
@@ -77,6 +78,7 @@ struct Bridge
     coopnet::SpawnRegistry knownSpawns;
     std::vector<coopnet::Spawn> pendingSpawns;
     std::vector<u32> pendingDespawns;
+    std::deque<std::string> incomingRpcs;
     char debugDrive[256] = "";
     u32 debugTraceMs = 0;
     u32 autoDumpLimit = 0;
@@ -272,6 +274,9 @@ void handleAppMessage(Bridge& b, const coopnet::Session::Delivery& delivery,
                 b.server->broadcastExcept(*from, coopnet::Channel::Control, wire);
         }
         rememberChat(message);
+        b.incomingRpcs.push_back(message.text);
+        while (b.incomingRpcs.size() > 4096)
+            b.incomingRpcs.pop_front();
         return;
     }
 
@@ -341,9 +346,11 @@ void handleAppMessage(Bridge& b, const coopnet::Session::Delivery& delivery,
         // A peer that reloaded the level publishes a fresh blob under the same
         // net_id: the old doll belongs to the previous world and must go.
         const coopnet::SpawnRegistry::Change change = b.knownSpawns.observe(spawn);
-        if (change != coopnet::SpawnRegistry::Change::Unchanged)
-            Msg("* coop: spawn blob for player %u (%u bytes)", unsigned(spawn.netId),
-                unsigned(spawn.data.size()));
+        if (change == coopnet::SpawnRegistry::Change::Unchanged)
+            return;
+
+        Msg("* coop: spawn blob for player %u (%u bytes)", unsigned(spawn.netId),
+            unsigned(spawn.data.size()));
 
         if (b.server && from != nullptr)
         {
@@ -371,6 +378,7 @@ coopnet::PeerConfig makePeerConfig()
     coopnet::PeerConfig config;
     config.buildHash = kBuildHash;
     config.maxPlayers = 4;
+    config.session.timeoutMs = 60000;
     return config;
 }
 
@@ -779,7 +787,17 @@ pcstr BridgeLastChat()
     return state().lastChat;
 }
 
-void BridgePublishLocalPlayer(float x, float y, float z, float yaw,
+bool BridgeTakeRpc(char* out, u32 maxLen)
+{
+    Bridge& b = state();
+    if (out == nullptr || maxLen == 0 || b.incomingRpcs.empty())
+        return false;
+    xr_strcpy(out, maxLen, b.incomingRpcs.front().c_str());
+    b.incomingRpcs.pop_front();
+    return true;
+}
+
+void BridgePublishLocalPlayer(float x, float y, float z, float yaw, float pitch,
     u16 bodyState)
 {
     Bridge& b = state();
@@ -793,6 +811,7 @@ void BridgePublishLocalPlayer(float x, float y, float z, float yaw,
     sample.y = y;
     sample.z = z;
     sample.yaw = yaw;
+    sample.pitch = pitch;
     sample.bodyState = static_cast<std::uint16_t>(bodyState & 0x7FFF);
 
     std::vector<std::uint8_t> wire;
@@ -838,6 +857,7 @@ u32 BridgeRemotePlayers(RemotePlayer* out, u32 capacity)
         player.y = players[i].y;
         player.z = players[i].z;
         player.yaw = players[i].yaw;
+        player.pitch = players[i].pitch;
         player.bodyState = players[i].bodyState;
     }
     return count < capacity ? count : capacity;
@@ -888,7 +908,7 @@ u32 BridgeRemoteInputs(PlayerInput* out, u32 capacity)
 }
 
 void BridgePublishRemoteState(u32 netId, float x, float y, float z, float yaw,
-    u16 bodyState)
+    float pitch, u16 bodyState)
 {
     Bridge& b = state();
     if (b.server == nullptr || netId == 0)
@@ -900,6 +920,7 @@ void BridgePublishRemoteState(u32 netId, float x, float y, float z, float yaw,
     sample.y = y;
     sample.z = z;
     sample.yaw = yaw;
+    sample.pitch = pitch;
     sample.bodyState = static_cast<std::uint16_t>(bodyState & 0x7FFF);
 
     std::vector<std::uint8_t> wire;
@@ -946,6 +967,13 @@ u32 BridgeTakeSpawns(SpawnInfo* out, u32 capacity)
     while (written < capacity && !b.pendingSpawns.empty())
     {
         const coopnet::Spawn& spawn = b.pendingSpawns.front();
+        if (spawn.data.size() > coop::kCoopSpawnBlobMax)
+        {
+            Msg("! coop: pending spawn blob for %u exceeds max limit (%u > %u), dropping",
+                unsigned(spawn.netId), unsigned(spawn.data.size()), unsigned(coop::kCoopSpawnBlobMax));
+            b.pendingSpawns.erase(b.pendingSpawns.begin());
+            continue;
+        }
         SpawnInfo& info = out[written++];
         info.netId = spawn.netId;
         info.size = static_cast<u32>(spawn.data.size());

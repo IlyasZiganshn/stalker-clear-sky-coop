@@ -16,7 +16,7 @@ param(
     [string]$ClientDir = 'local\game-client',
     [int]$Port = 27016,
     [string]$Server = 'all/single/alife/new',
-    [string]$DriveScript = '1000 4000f,2500fc,1200j,3500ft',
+    [string]$DriveScript = '1000 yaw=-1.57 4000f,2500fc,1200j,3500ft',
     [int]$TraceIntervalMs = 200,
     [int]$ClientDelaySeconds = 15,
     [int]$TimeoutSeconds = 240,
@@ -122,6 +122,16 @@ try {
     Write-Host "==> Connection & Doll Spawn phase verified!"
     Start-Sleep -Seconds 3
 
+    # Ensure screenshot directories exist
+    New-Item -ItemType Directory -Path (Join-Path $hostCopy.AppData 'screenshots') -Force -ErrorAction SilentlyContinue | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $clientCopy.AppData 'screenshots') -Force -ErrorAction SilentlyContinue | Out-Null
+
+    # Capture in-game screenshot at spawn
+    Send-CoopCmd $hostCopy "coop_screenshot"
+    Send-CoopCmd $clientCopy "coop_screenshot"
+    Start-Sleep -Seconds 2
+    & "$root\scripts\capture_screen.ps1" -OutputPath "$root\live_coop_spawn.png"
+
     # Animation & Motion testing sequence via client coop_drive:
     # Phase 1: Forward run (4s)
     # Phase 2: Forward crouch (2.5s)
@@ -129,6 +139,13 @@ try {
     # Phase 4: Forward sprint / turbo (3.5s)
     Write-Host "==> Executing Animation & Motion sequence on Client ($DriveScript)..."
     Send-CoopCmd $clientCopy "coop_drive $DriveScript"
+
+    Start-Sleep -Seconds 3
+    # Capture in-game screenshot during movement
+    Send-CoopCmd $hostCopy "coop_screenshot"
+    Send-CoopCmd $clientCopy "coop_screenshot"
+    Start-Sleep -Seconds 2
+    & "$root\scripts\capture_screen.ps1" -OutputPath "$root\live_coop_motion.png"
 
     $driveDeadline = (Get-Date).AddSeconds(20)
     while ((Get-Date) -lt $driveDeadline) {

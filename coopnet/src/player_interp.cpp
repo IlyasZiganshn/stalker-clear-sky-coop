@@ -127,6 +127,8 @@ std::uint32_t PlayerInterpolator::sample(std::uint32_t nowMs,
             state.z = lerp(older.state.z, newer.state.z, t);
             const float deltaYaw = wrapAngle(newer.state.yaw - older.state.yaw);
             state.yaw = wrapAngle(older.state.yaw + deltaYaw * t);
+            const float deltaPitch = wrapAngle(newer.state.pitch - older.state.pitch);
+            state.pitch = wrapAngle(older.state.pitch + deltaPitch * t);
             // Discrete body state: kept from the older sample until render time reaches newer
             state.bodyState = older.state.bodyState;
         }

@@ -28,6 +28,8 @@ XRNETSERVER_API bool BridgePeerName(u32 netId, char* out, u32 capacity);
 XRNETSERVER_API bool BridgeSay(pcstr text);
 // Last chat line seen in this process, empty when there was none.
 XRNETSERVER_API pcstr BridgeLastChat();
+// Retrieves and removes the oldest incoming RPC or chat message. Returns false when empty.
+XRNETSERVER_API bool BridgeTakeRpc(char* out, u32 maxLen);
 
 // One transform of a remote player, as last heard from the authority.
 struct RemotePlayer
@@ -37,6 +39,7 @@ struct RemotePlayer
     float y = 0.f;
     float z = 0.f;
     float yaw = 0.f;
+    float pitch = 0.f;
     u16 bodyState = 0; // engine movement bits (mc*), for the doll animation
 };
 
@@ -44,7 +47,7 @@ struct RemotePlayer
 // rate-limits itself (20 Hz), so calling it every frame is fine; no-op without
 // a session.
 XRNETSERVER_API void BridgePublishLocalPlayer(float x, float y, float z, float yaw,
-    u16 bodyState);
+    float pitch, u16 bodyState);
 // Copies up to capacity fresh remote transforms (stale after 2 s) into out and
 // returns how many were written.
 XRNETSERVER_API u32 BridgeRemotePlayers(RemotePlayer* out, u32 capacity);
@@ -87,7 +90,7 @@ XRNETSERVER_API u32 BridgeRemoteInputs(PlayerInput* out, u32 capacity);
 // owner's prediction. Call it at snapshot rate (20 Hz); the bridge does not
 // throttle per doll.
 XRNETSERVER_API void BridgePublishRemoteState(u32 netId, float x, float y,
-    float z, float yaw, u16 bodyState);
+    float z, float yaw, float pitch, u16 bodyState);
 
 // One serialized entity spawn (CSE_Abstract bytes) tagged with its owner.
 // The bridge never parses the blob; the game side does.

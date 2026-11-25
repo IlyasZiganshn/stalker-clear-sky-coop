@@ -35,7 +35,6 @@ namespace ClearSkyCoop.Launcher
         public const int DiscoveryPort = 27015;
         private const string BeaconHeader = "CS_COOP_BEACON_V1";
 
-        private UdpClient _broadcastClient;
         private UdpClient _listenerClient;
         private Thread _broadcastThread;
         private Thread _listenThread;

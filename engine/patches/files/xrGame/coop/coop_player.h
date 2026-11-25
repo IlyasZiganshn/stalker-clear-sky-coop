@@ -15,4 +15,14 @@ bool IsRemoteDollId(u16 gameId);
 u32 FindRemoteNetId(u16 gameId);
 bool GetRemotePeerName(u16 gameId, char* out, u32 capacity);
 bool IsPlayerOrDoll(IGameObject* obj);
+
+// Task, infoportion and cutscene synchronization
+void OnReceiveInfo(pcstr infoId);
+void OnDisableInfo(pcstr infoId);
+void OnTaskGiven(pcstr taskId);
+void OnTaskState(pcstr taskId, u32 state, u32 objectiveId);
+void PollCoopRpc();
+bool IsLocalInCutscene();
+bool ShouldHideRemoteDolls();
+bool IsInCutscene();
 } // namespace coop

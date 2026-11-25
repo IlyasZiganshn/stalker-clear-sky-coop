@@ -17,6 +17,7 @@ coopnet::PlayerState sample() {
     state.y = -3.25f;
     state.z = 87.125f;
     state.yaw = 1.5f;
+    state.pitch = -0.35f;
     state.bodyState = 0x1234;
     return state;
 }
@@ -36,6 +37,7 @@ COOP_TEST(player_state_roundtrip) {
     CHECK(decoded.y == original.y);
     CHECK(decoded.z == original.z);
     CHECK(decoded.yaw == original.yaw);
+    CHECK(decoded.pitch == original.pitch);
     CHECK_EQ(decoded.bodyState, original.bodyState);
 }
 
@@ -92,8 +94,8 @@ COOP_TEST(player_state_carries_body_state_last) {
     const coopnet::PlayerState original = sample();
     std::vector<std::uint8_t> wire;
     CHECK(coopnet::encodePlayerState(original, wire));
-    CHECK_EQ(wire[21], std::uint8_t{0x34});
-    CHECK_EQ(wire[22], std::uint8_t{0x12});
+    CHECK_EQ(wire[25], std::uint8_t{0x34});
+    CHECK_EQ(wire[26], std::uint8_t{0x12});
 }
 
 static_assert(coopnet::kPlayerStateType > 5,

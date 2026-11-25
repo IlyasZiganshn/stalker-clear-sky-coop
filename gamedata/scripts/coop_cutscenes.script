@@ -2,37 +2,76 @@
 -- Synchronizes input locking when story sequences or cutscenes trigger.
 
 local in_cutscene = false
+local hooks_installed = false
+local orig_disable_ui = nil
+local orig_disable_ui_only = nil
+local orig_enable_ui = nil
+
+function install_hooks()
+    if hooks_installed then return end
+
+    pcall(function()
+        if xr_effects then
+            if not orig_disable_ui and xr_effects.disable_ui then
+                orig_disable_ui = xr_effects.disable_ui
+                xr_effects.disable_ui = function(actor, npc, p)
+                    orig_disable_ui(actor, npc, p)
+                    start_cutscene()
+                end
+            end
+            if not orig_disable_ui_only and xr_effects.disable_ui_only then
+                orig_disable_ui_only = xr_effects.disable_ui_only
+                xr_effects.disable_ui_only = function(actor, npc, p)
+                    orig_disable_ui_only(actor, npc, p)
+                    start_cutscene()
+                end
+            end
+            if not orig_enable_ui and xr_effects.enable_ui then
+                orig_enable_ui = xr_effects.enable_ui
+                xr_effects.enable_ui = function(actor, npc, p)
+                    orig_enable_ui(actor, npc, p)
+                    stop_cutscene()
+                end
+            end
+            hooks_installed = true
+            printf("[coop_cutscenes] Cutscene UI hooks installed successfully.")
+        end
+    end)
+end
 
 function init()
     printf("[coop_cutscenes] Initializing cutscene synchronizer...")
+    install_hooks()
+end
+
+function update(delta)
+    if not hooks_installed then
+        install_hooks()
+    end
 end
 
 function start_cutscene()
     if in_cutscene then return end
     in_cutscene = true
-    printf("[coop_cutscenes] Cutscene started - locking input for co-op session")
+    printf("[coop_cutscenes] Cutscene started - isolating view for co-op session")
 
     if level and level.disable_input then
         level.disable_input()
     end
 
-    if coop_main and coop_main.is_coop_host() then
-        send_cutscene_rpc("START")
-    end
+    send_cutscene_rpc("START")
 end
 
 function stop_cutscene()
     if not in_cutscene then return end
     in_cutscene = false
-    printf("[coop_cutscenes] Cutscene stopped - enabling input")
+    printf("[coop_cutscenes] Cutscene stopped - restoring view")
 
     if level and level.enable_input then
         level.enable_input()
     end
 
-    if coop_main and coop_main.is_coop_host() then
-        send_cutscene_rpc("STOP")
-    end
+    send_cutscene_rpc("STOP")
 end
 
 function send_cutscene_rpc(state)
@@ -47,13 +86,7 @@ function receive_cutscene_rpc(state)
     printf("[coop_cutscenes] Received cutscene RPC: %s", tostring(state))
     if state == "START" then
         in_cutscene = true
-        if level and level.disable_input then
-            level.disable_input()
-        end
     elseif state == "STOP" then
         in_cutscene = false
-        if level and level.enable_input then
-            level.enable_input()
-        end
     end
 end

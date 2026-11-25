@@ -2,43 +2,90 @@
 -- Ensures tasks, objectives, and map targets match 100% on Host and Client.
 
 local active_tasks = {}
+local hooks_installed = false
+local in_receive_rpc = false
+
+local orig_give_task = nil
+local orig_task_callback = nil
+local orig_general_give_task = nil
+
+function install_hooks()
+    if hooks_installed then return end
+
+    pcall(function()
+        if task_manager and task_manager.CRandomTask then
+            if not orig_give_task and task_manager.CRandomTask.give_task then
+                orig_give_task = task_manager.CRandomTask.give_task
+                task_manager.CRandomTask.give_task = function(self, task_id, community)
+                    orig_give_task(self, task_id, community)
+                    on_task_given(task_id)
+                end
+                printf("[coop_tasks] Hooked CRandomTask.give_task")
+            end
+
+            if not orig_task_callback and task_manager.CRandomTask.task_callback then
+                orig_task_callback = task_manager.CRandomTask.task_callback
+                task_manager.CRandomTask.task_callback = function(self, task, completed)
+                    orig_task_callback(self, task, completed)
+                    local tid = task and task.get_id and task:get_id()
+                    if tid then
+                        if completed == true then
+                            on_task_completed(tid)
+                        else
+                            on_task_failed(tid)
+                        end
+                    end
+                end
+                printf("[coop_tasks] Hooked CRandomTask.task_callback")
+            end
+        end
+
+        if task_objects and task_objects.CGeneralTask and not orig_general_give_task and task_objects.CGeneralTask.give_task then
+            orig_general_give_task = task_objects.CGeneralTask.give_task
+            task_objects.CGeneralTask.give_task = function(self, community)
+                orig_general_give_task(self, community)
+                local tid = self.id or self.base_id or (self.entity_id and tostring(self.entity_id))
+                if tid then
+                    on_task_given(tid)
+                end
+            end
+            printf("[coop_tasks] Hooked CGeneralTask.give_task")
+        end
+
+        if orig_give_task or orig_general_give_task then
+            hooks_installed = true
+        end
+    end)
+end
 
 function init()
     printf("[coop_tasks] Initializing task synchronization...")
+    install_hooks()
 end
 
 function on_task_given(task_id)
-    if not task_id then return end
+    if not task_id or in_receive_rpc then return end
     active_tasks[task_id] = "selected"
     printf("[coop_tasks] Task given: %s", tostring(task_id))
-
-    -- Broadcast to client if host
-    if coop_main and coop_main.is_coop_host() then
-        send_task_rpc("GIVE", task_id)
-    end
+    send_task_rpc("GIVE", task_id)
 end
 
 function on_task_completed(task_id)
-    if not task_id then return end
+    if not task_id or in_receive_rpc then return end
     active_tasks[task_id] = "completed"
     printf("[coop_tasks] Task completed: %s", tostring(task_id))
-
-    if coop_main and coop_main.is_coop_host() then
-        send_task_rpc("COMPLETE", task_id)
-    end
+    send_task_rpc("COMPLETE", task_id)
 end
 
 function on_task_failed(task_id)
-    if not task_id then return end
+    if not task_id or in_receive_rpc then return end
     active_tasks[task_id] = "failed"
     printf("[coop_tasks] Task failed: %s", tostring(task_id))
-
-    if coop_main and coop_main.is_coop_host() then
-        send_task_rpc("FAIL", task_id)
-    end
+    send_task_rpc("FAIL", task_id)
 end
 
 function send_task_rpc(action, task_id)
+    if in_receive_rpc then return end
     local msg = string.format("COOP_TASK|%s|%s", action, tostring(task_id))
     local console = get_console()
     if console then
@@ -46,21 +93,58 @@ function send_task_rpc(action, task_id)
     end
 end
 
-function receive_task_rpc(action, task_id)
-    printf("[coop_tasks] Received task RPC: action=%s, task=%s", tostring(action), tostring(task_id))
+function receive_task_rpc(action, task_id, state_val, obj_val)
+    if not task_id then return end
+    printf("[coop_tasks] Received task RPC: action=%s, task=%s, state=%s", tostring(action), tostring(task_id), tostring(state_val))
     active_tasks[task_id] = action
 
-    -- Mirror on client local task manager if present
-    if task_manager and task_manager.get_task_manager then
-        local tm = task_manager.get_task_manager()
-        if tm then
-            if action == "GIVE" and tm.give_task then
-                pcall(function() tm:give_task(task_id) end)
+    local tm = task_manager and task_manager.get_task_manager and task_manager.get_task_manager()
+    if not tm then return end
+
+    in_receive_rpc = true
+    pcall(function()
+        if action == "GIVE" then
+            if tm.task_info and tm.task_info[task_id] == nil then
+                for k, v in pairs(tm.inited_tasks or {}) do
+                    if v.base_id == task_id or v.id == task_id or tostring(v.entity_id) == tostring(task_id) or k == tostring(task_id) then
+                        if v.status ~= "selected" then
+                            v:give_task(v.community or "csky")
+                        end
+                    end
+                end
+                if tm.give_task and tm.task_info[task_id] == nil then
+                    tm:give_task(task_id)
+                end
+            end
+        elseif action == "COMPLETE" or (action == "STATE" and tonumber(state_val) == 2) then
+            if tm.task_info then
+                for k, v in pairs(tm.task_info) do
+                    if v.base_id == task_id or v.id == task_id or tostring(v.entity_id) == tostring(task_id) or k == tostring(task_id) then
+                        v.last_check_task = "complete"
+                        if v.check_task then
+                            v:check_task(tm)
+                        end
+                    end
+                end
+            end
+        elseif action == "FAIL" or (action == "STATE" and tonumber(state_val) == 1) then
+            if tm.task_info then
+                for k, v in pairs(tm.task_info) do
+                    if v.base_id == task_id or v.id == task_id or tostring(v.entity_id) == tostring(task_id) or k == tostring(task_id) then
+                        v.last_check_task = "fail"
+                        if v.check_task then
+                            v:check_task(tm)
+                        end
+                    end
+                end
             end
         end
-    end
+    end)
+    in_receive_rpc = false
 end
 
 function update(delta)
-    -- Periodic check / reconciliation
+    if not hooks_installed then
+        install_hooks()
+    end
 end

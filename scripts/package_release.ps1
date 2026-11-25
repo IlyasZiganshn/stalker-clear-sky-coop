@@ -50,6 +50,12 @@ if (Test-Path $srcGamedata) {
     Write-Host "  [+] Copied gamedata scripts"
 }
 
+# 3.1 Copy diagnostic scripts
+$targetScripts = Join-Path $releaseDir 'scripts'
+New-Item -ItemType Directory -Path $targetScripts -Force | Out-Null
+Copy-Item -Path (Join-Path $repoRoot 'scripts\collect_diagnostics.ps1') -Destination $targetScripts -Force
+Write-Host "  [+] Copied scripts\collect_diagnostics.ps1"
+
 # 4. Create simple instruction file
 $instruction = @"
 =====================================================================

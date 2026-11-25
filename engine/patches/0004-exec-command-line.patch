@@ -2,7 +2,7 @@ diff --git a/src/xrEngine/x_ray.cpp b/src/xrEngine/x_ray.cpp
 index 20d2e57..15ed6f4 100644
 --- a/src/xrEngine/x_ray.cpp
 +++ b/src/xrEngine/x_ray.cpp
-@@ -287,6 +287,37 @@ CApplication::CApplication(pcstr commandLine, GameModule* game, const std::array
+@@ -287,6 +287,51 @@ CApplication::CApplication(pcstr commandLine, GameModule* game, const std::array
      if (loadArgs)
          Console->Execute(loadArgs + 1);
  
@@ -16,21 +16,35 @@ index 20d2e57..15ed6f4 100644
 +    if (execArgs)
 +    {
 +        execArgs += xr_strlen("-exec ");
++        while (*execArgs == ' ' || *execArgs == '\t')
++            ++execArgs;
 +        const size_t length = xr_strlen(execArgs);
 +        string4096 command;
 +        if (length >= 2 && execArgs[0] == '"' && execArgs[length - 1] == '"')
 +            xr_sprintf(command, sizeof(command), "%.*s", int(length - 2), execArgs + 1);
 +        else
 +            xr_strcpy(command, sizeof(command), execArgs);
-+        Log("* exec:", command);
 +
-+        for (pstr cursor = command; cursor != nullptr;)
++        pstr start = command;
++        while (*start == ' ' || *start == '\t' || *start == '"' || *start == '\\')
++            ++start;
++        pstr end = start + xr_strlen(start);
++        while (end > start && (*(end - 1) == ' ' || *(end - 1) == '\t' || *(end - 1) == '"' || *(end - 1) == '\\'))
++            *(--end) = 0;
++
++        Log("* exec:", start);
++
++        for (pstr cursor = start; cursor != nullptr;)
 +        {
 +            pstr next = strchr(cursor, ';');
 +            if (next != nullptr)
 +                *next++ = 0;
-+            while (*cursor == ' ' || *cursor == '\t')
++            while (*cursor == ' ' || *cursor == '\t' || *cursor == '"' || *cursor == '\\')
 +                ++cursor;
++            pstr curEnd = cursor + xr_strlen(cursor);
++            while (curEnd > cursor && (*(curEnd - 1) == ' ' || *(curEnd - 1) == '\t' || *(curEnd - 1) == '"' || *(curEnd - 1) == '\\'))
++                *(--curEnd) = 0;
++
 +            if (*cursor != 0)
 +                Console->Execute(cursor);
 +            cursor = next;

@@ -52,7 +52,8 @@ bool encodePlayerState(const PlayerState& state,
         return false;
     }
     if (!std::isfinite(state.x) || !std::isfinite(state.y) ||
-        !std::isfinite(state.z) || !std::isfinite(state.yaw)) {
+        !std::isfinite(state.z) || !std::isfinite(state.yaw) ||
+        !std::isfinite(state.pitch)) {
         return false;
     }
     out.resize(kPlayerStateSize);
@@ -62,7 +63,8 @@ bool encodePlayerState(const PlayerState& state,
     putF32(out.data() + 9, state.y);
     putF32(out.data() + 13, state.z);
     putF32(out.data() + 17, state.yaw);
-    putU16(out.data() + 21, state.bodyState);
+    putF32(out.data() + 21, state.pitch);
+    putU16(out.data() + 25, state.bodyState);
     return true;
 }
 
@@ -77,10 +79,11 @@ bool decodePlayerState(const std::uint8_t* data, std::size_t size,
     state.y = getF32(data + 9);
     state.z = getF32(data + 13);
     state.yaw = getF32(data + 17);
-    state.bodyState = getU16(data + 21);
+    state.pitch = getF32(data + 21);
+    state.bodyState = getU16(data + 25);
     if (state.netId == 0 || !std::isfinite(state.x) ||
         !std::isfinite(state.y) || !std::isfinite(state.z) ||
-        !std::isfinite(state.yaw)) {
+        !std::isfinite(state.yaw) || !std::isfinite(state.pitch)) {
         return false;
     }
     out = state;

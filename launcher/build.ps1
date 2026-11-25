@@ -50,7 +50,9 @@ $cscArgs = @(
     "-r:System.dll",
     "-r:System.Core.dll",
     "-r:System.Windows.Forms.dll",
-    "-r:System.Drawing.dll"
+    "-r:System.Drawing.dll",
+    "-r:System.IO.Compression.dll",
+    "-r:System.IO.Compression.FileSystem.dll"
 ) + $sources
 
 & $csc @cscArgs

@@ -1,15 +1,25 @@
 using System;
 using System.IO;
 using System.Threading;
+using System.Diagnostics;
 using System.Windows.Forms;
+using System.Runtime.InteropServices;
 
 namespace ClearSkyCoop.Launcher
 {
     public static class Program
     {
+        [DllImport("user32.dll")]
+        private static extern bool SetProcessDPIAware();
+
         [STAThread]
         public static int Main(string[] args)
         {
+            try
+            {
+                SetProcessDPIAware();
+            }
+            catch { }
             if (args != null && args.Length > 0)
             {
                 string cmd = args[0].ToLowerInvariant();
@@ -23,6 +33,21 @@ namespace ClearSkyCoop.Launcher
                         return 0;
                     }
                     Console.Error.WriteLine("Clear Sky installation not detected");
+                    return 1;
+                }
+
+                if (cmd == "--start-host")
+                {
+                    int port = args.Length >= 2 ? int.Parse(args[1]) : 27016;
+                    string gamePath = GameLocator.DetectGamePath();
+                    string err;
+                    Process p = SessionLauncher.StartHost(gamePath, port, true, out err);
+                    if (p != null)
+                    {
+                        Console.WriteLine("HOST_STARTED:" + p.Id);
+                        return 0;
+                    }
+                    Console.Error.WriteLine("ERROR:" + err);
                     return 1;
                 }
 

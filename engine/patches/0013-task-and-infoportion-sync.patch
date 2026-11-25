@@ -1,0 +1,104 @@
+diff --git a/src/xrGame/Actor.h b/src/xrGame/Actor.h
+index 5828605..1621544 100644
+--- a/src/xrGame/Actor.h
++++ b/src/xrGame/Actor.h
+@@ -301,6 +301,13 @@ public:
+ 
+     virtual const SRotation Orientation() const { return r_torso; };
+     SRotation& Orientation() { return r_torso; };
++    SRotation& Torso() { return r_torso; };
++    const SRotation& Torso() const { return r_torso; };
++    SRotation& UnaffectedOrientation() { return unaffected_r_torso; };
++    const SRotation& UnaffectedOrientation() const { return unaffected_r_torso; };
++    float& ModelYaw() { return r_model_yaw; }
++    float& ModelYawDest() { return r_model_yaw_dest; }
++    float& ModelYawDelta() { return r_model_yaw_delta; }
+     void g_SetAnimation(u32 mstate_rl);
+     void g_SetSprintAnimation(u32 mstate_rl, MotionID& head, MotionID& torso, MotionID& legs);
+ 
+@@ -421,6 +428,10 @@ public:
+     u32 GetWishfulBodyState() const { return mstate_wishful; }
+     void SetWishfulBodyState(const u32 state) { mstate_wishful = state; }
+ 
++    [[nodiscard]]
++    u32 GetOldBodyState() const { return mstate_old; }
++    void SetOldBodyState(const u32 state) { mstate_old = state; }
++
+ protected:
+     u32 mstate_wishful;
+     u32 mstate_old;
+diff --git a/src/xrGame/GametaskManager.cpp b/src/xrGame/GametaskManager.cpp
+index 2bce9e4..02a0075 100644
+--- a/src/xrGame/GametaskManager.cpp
++++ b/src/xrGame/GametaskManager.cpp
+@@ -12,6 +12,7 @@
+ #include "encyclopedia_article.h"
+ #include "ui/UIMapWnd.h"
+ #include "xrCore/buffer_vector.h"
++#include "coop/coop_player.h"
+ 
+ TASK_ID g_active_task_id[eTaskTypeCount];
+ 
+@@ -108,6 +109,8 @@ CGameTask* CGameTaskManager::GiveGameTaskToActor(CGameTask* t, u32 timeToComplet
+         return NULL;
+     }
+ 
++    coop::OnTaskGiven(t->m_ID.c_str());
++
+     m_flags.set(eChanged, TRUE);
+ 
+     SGameTaskKey& key = GetGameTasks().emplace_back(t->m_ID);
+@@ -148,6 +151,8 @@ void CGameTaskManager::SetTaskState(CGameTask* task, ETaskState state, TASK_OBJE
+ {
+     m_flags.set(eChanged, TRUE);
+ 
++    coop::OnTaskState(task->m_ID.c_str(), state, objective_id);
++
+     ETaskType type = eTaskTypeStoryline;
+     if (m_flags.test(eMultipleTasks))
+         type = task->GetTaskType();
+diff --git a/src/xrGame/InfoPortion.cpp b/src/xrGame/InfoPortion.cpp
+index 820fd35..70e3e5d 100644
+--- a/src/xrGame/InfoPortion.cpp
++++ b/src/xrGame/InfoPortion.cpp
+@@ -31,6 +31,18 @@ void CInfoPortion::load_shared(LPCSTR)
+ 
+     if (item_data == nullptr)
+     {
++        // Don't warn for known engine internal pseudo-infoportions
++        static const pcstr s_ignored[] = {
++            "ui_talk_show", "ui_talk_hide", "ui_pda", "ui_pda_hide",
++            "ui_pda_map_local", "eptTasks", "eptMap", "eptFactionWar",
++            "eptRanking", "eptLogs"
++        };
++        for (const auto& ign : s_ignored)
++        {
++            if (m_InfoId == ign)
++                return;
++        }
++
+         if (ShadowOfChernobylMode || ClearSkyMode)
+             Msg("! attempt to use non-existent INFOPORTION [%s]", m_InfoId.c_str());
+         return;
+diff --git a/src/xrGame/actor_communication.cpp b/src/xrGame/actor_communication.cpp
+index 0f7f3a8..23f4463 100644
+--- a/src/xrGame/actor_communication.cpp
++++ b/src/xrGame/actor_communication.cpp
+@@ -139,6 +139,8 @@ bool CActor::OnReceiveInfo(shared_str info_id) const
+     if (!CInventoryOwner::OnReceiveInfo(info_id))
+         return false;
+ 
++    coop::OnReceiveInfo(info_id.c_str());
++
+     CInfoPortion info_portion;
+     info_portion.Load(info_id);
+ 
+@@ -166,6 +168,8 @@ void CActor::OnDisableInfo(shared_str info_id) const
+ {
+     const bool wasPresent = HasInfo(info_id);
+ 
++    coop::OnDisableInfo(info_id.c_str());
++
+     CInventoryOwner::OnDisableInfo(info_id);
+ 
+     if (wasPresent)
